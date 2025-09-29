@@ -1,5 +1,5 @@
 use entity_derive::Entity;
-use hord3::{defaults::default_rendering::vectorinator_binned::{meshes::{Mesh, MeshID, MeshInstance}, VectorinatorWrite}, horde::{game_engine::{entity::{Component, ComponentEvent, EVecStopsIn, EVecStopsOut, Entity, EntityID, EntityVec, NewEntity, StaticComponent, StaticEntity}, multiplayer::Identify, position::EntityPosition, static_type_id::HasStaticTypeID}, geometry::{rotation::{Orientation, Rotation}, vec3d::Vec3Df}}};
+use hord3::{defaults::default_rendering::vectorinator_binned::{meshes::{Mesh, MeshID, MeshInstance}, VectorinatorWrite}, horde::{game_engine::{entity::{Component, ComponentEvent, EVecStopsIn, EVecStopsOut, Entity, EntityID, EntityVec, MultiplayerEntity, NewEntity, StaticComponent, StaticEntity}, multiplayer::Identify, position::EntityPosition, static_type_id::HasStaticTypeID}, geometry::{rotation::{Orientation, Rotation}, vec3d::Vec3Df}}};
 use to_from_bytes_derive::{FromBytes, ToBytes};
 
 use crate::game_entity::{actions::Actions, colliders::AABB, director::Director, planner::Planner};
@@ -29,7 +29,7 @@ impl StaticComponent for StaticMovement {
     
 }
 
-#[derive(Clone, ToBytes, FromBytes)]
+#[derive(Clone, ToBytes, FromBytes, PartialEq)]
 pub enum MovementEventVariant {
     UpdatePos(Vec3Df),
     AddToSpeed(Vec3Df),
@@ -40,7 +40,7 @@ pub enum MovementEventVariant {
     UpdateAgainstWall(bool)
 }
 
-#[derive(Clone, ToBytes, FromBytes)]
+#[derive(Clone, ToBytes, FromBytes, PartialEq)]
 pub struct MovementEvent<ID:Identify> {
     id:usize,
     source:Option<ID>,
@@ -104,7 +104,7 @@ pub struct StaticCollider {
     pub init_aabb:AABB,
 }
 
-#[derive(Clone, ToBytes, FromBytes)]
+#[derive(Clone, ToBytes, FromBytes, PartialEq)]
 pub struct ColliderEvent<ID:Identify> {
     id:usize,
     source:Option<ID>,
@@ -117,7 +117,7 @@ impl<ID:Identify> ColliderEvent<ID> {
     }
 }
 
-#[derive(Clone, ToBytes, FromBytes)]
+#[derive(Clone, ToBytes, FromBytes, PartialEq)]
 pub enum ColliderEventVariant {
     UpdateCollider(AABB),
     ChangeTeam(u8),
@@ -162,13 +162,13 @@ pub struct StaticMeshInfo {
     pub mesh_id:MeshID,
 }
 
-#[derive(Clone, ToBytes, FromBytes)]
+#[derive(Clone, ToBytes, FromBytes, PartialEq)]
 pub struct MeshEvent {
     id:usize,
     variant:MeshEventVariant
 }
 
-#[derive(Clone, ToBytes, FromBytes)]
+#[derive(Clone, ToBytes, FromBytes, PartialEq)]
 pub enum MeshEventVariant {
     UpdateInstanceID(Option<usize>),
 }
@@ -211,14 +211,14 @@ pub struct Stats {
     pub jump_height:f32,
 }
 
-#[derive(Clone, ToBytes, FromBytes)]
+#[derive(Clone, ToBytes, FromBytes, PartialEq)]
 pub struct StatEvent<ID:Identify> {
     id:usize,
     source:Option<ID>,
     variant:StatEventVariant
 }
 
-#[derive(Clone, ToBytes, FromBytes)]
+#[derive(Clone, ToBytes, FromBytes, PartialEq)]
 pub enum StatEventVariant {
     UpdateHealth(i32),
     UpdateDamage(i32),
@@ -265,7 +265,7 @@ impl HasStaticTypeID for Stats {
     }
 }
 
-impl<ID:Identify> NewEntity<GameEntity,ID> for NewGameEntity {
+impl<ID:Identify> NewEntity<GameEntity,ID> for NewGameEntity<ID> {
     fn get_ent(self) -> GameEntity {
         GameEntity {
             movement:self.movement,
@@ -297,14 +297,17 @@ impl<'a, ID:Identify> RenderGameEntity<VectorinatorWrite<'a>, ID> for GameEntity
     }
 }
 
+
 #[derive(Entity, Clone)]
 pub struct GameEntity {
     #[position]
     #[used_in_render]
     #[used_in_new]
+    #[must_sync]
     movement:Movement,
     #[static_id]
     #[used_in_new]
+    #[must_sync]
     stats:Stats,
     #[used_in_render]
     mesh_info:MeshInfo,

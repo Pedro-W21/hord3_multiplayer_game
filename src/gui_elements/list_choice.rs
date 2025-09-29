@@ -1,7 +1,7 @@
 use cosmic_text::{Color, Metrics};
 use hord3::defaults::default_ui::simple_ui::{TextCentering, UIDimensions, UIElement, UIElementBackground, UIElementContent, UIElementID, UIEvent, UIUnit, UIUserAction, UIVector};
 
-use crate::game_tasks::GameUserEvent;
+use crate::client::client_tasks::GameUserEvent;
 
 use super::{DEFAULT_BACKGROUND_COLOR, DEFAULT_CONTENT_BACKGROUND_COLOR, DEFAULT_HOVER_COLOR, DEFAULT_REACT_COLOR};
 

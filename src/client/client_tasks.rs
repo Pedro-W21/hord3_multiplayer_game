@@ -4,7 +4,7 @@ use task_derive::HordeTask;
 use crate::{cutscene::game_shader::GameShader, game_engine::{CoolGameEngine, CoolGameEngineBase}};
 
 #[derive(Clone, PartialEq, Hash, Eq, Debug, HordeTask)]
-pub enum GameTask {
+pub enum ClientTask {
     #[uses_type = "CoolGameEngineBase"]
     #[max_threads = 1]
     #[type_task_id = 0]
@@ -19,6 +19,22 @@ pub enum GameTask {
     #[max_threads = 8]
     #[type_task_id = 2]
     AfterMain,
+
+
+    #[uses_type = "CoolGameEngineBase"]
+    #[max_threads = 1]
+    #[type_task_id = 30]
+    SendMustSync,
+
+    #[uses_type = "CoolGameEngineBase"]
+    #[max_threads = 1]
+    #[type_task_id = 20]
+    MultiFirstPart,
+
+    #[uses_type = "CoolGameEngineBase"]
+    #[max_threads = 1]
+    #[type_task_id = 21]
+    MultiSecondPart,
 
     #[uses_type = "CoolGameEngineBase"]
     #[max_threads = 1]

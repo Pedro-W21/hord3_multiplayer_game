@@ -7,7 +7,7 @@ use entity_movement::EntitySequence;
 use game_shader::{GameShader, GameShaderFrameData};
 use hord3::{defaults::{default_rendering::vectorinator_binned::{shaders::ShaderData, Vectorinator}, default_ui::simple_ui::SimpleUI}, horde::{game_engine::{engine, multiplayer::Identify}, geometry::vec3d::Vec3Df, rendering::camera::Camera}};
 
-use crate::{game_engine::{CoolGameEngineBase, CoolGameEngineTID}, game_tasks::GameUserEvent};
+use crate::{game_engine::{CoolGameEngineBase, CoolGameEngineTID}, client::client_tasks::GameUserEvent};
 
 pub mod camera_movement;
 pub mod written_texture;

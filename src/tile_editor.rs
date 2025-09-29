@@ -1,9 +1,9 @@
-use std::{collections::{HashMap, HashSet, VecDeque}, f32::consts::{PI, SQRT_2}, path::PathBuf, sync::Arc};
+use std::{collections::{HashMap, HashSet, VecDeque}, f32::consts::{PI, SQRT_2}, path::{Path, PathBuf}, sync::Arc};
 
 use cosmic_text::{Color, Metrics};
-use hord3::{defaults::{default_rendering::vectorinator_binned::{meshes::{Mesh, MeshID, MeshInstance, MeshLODS, MeshLODType}, shaders::NoOpShader, textures::Textures, Vectorinator}, default_ui::simple_ui::{SimpleUI, SimpleUISave, TextCentering, UIElement, UIElementBackground, UIElementContent, UIElementID}}, horde::{frontend::{interact::Button, MouseState}, geometry::{rotation::Orientation, vec3d::{Vec3D, Vec3Df}}, rendering::camera::Camera}};
+use hord3::{defaults::{default_rendering::vectorinator_binned::{meshes::{Mesh, MeshID, MeshInstance, MeshLODS, MeshLODType}, shaders::NoOpShader, textures::Textures, Vectorinator}, default_ui::simple_ui::{SimpleUI, SimpleUISave, TextCentering, UIElement, UIElementBackground, UIElementContent, UIElementID}}, horde::{frontend::{interact::Button, MouseState}, game_engine::{multiplayer::Identify, world::WorldTunnelsOut}, geometry::{rotation::Orientation, vec3d::{Vec3D, Vec3Df}}, rendering::camera::Camera}};
 
-use crate::{cutscene::game_shader::GameShader, game_3d_models::{lit_selection_cube, selection_cube}, game_engine::{CoolVoxel, CoolVoxelType}, game_input_handler::GameInputHandler, game_map::{get_chunk_pos_i, get_float_pos, get_voxel_pos, light_spreader::{LightPos, LightSpread}, raycaster::Ray, GameMap, Voxel, VoxelLight, WorldChunkPos, WorldVoxelPos}, game_tasks::GameUserEvent, gui_elements::{editor_gui_elements::{light_spreader_elts, voxel_type_choice}, list_choice}};
+use crate::{client::client_tasks::GameUserEvent, cutscene::game_shader::GameShader, game_3d_models::{lit_selection_cube, selection_cube}, game_engine::{CoolGameEngineTID, CoolVoxel, CoolVoxelType}, game_input_handler::GameInputHandler, game_map::{get_chunk_pos_i, get_float_pos, get_voxel_pos, light_spreader::{LightPos, LightSpread}, raycaster::Ray, GameMap, GameMapEvent, Voxel, VoxelLight, WorldChunkPos, WorldVoxelPos}, gui_elements::{editor_gui_elements::{light_spreader_elts, voxel_type_choice}, list_choice}};
 
 
 pub const CHUNK_SIZE:usize = 8;
@@ -72,7 +72,7 @@ impl TileEditingTool {
     pub fn update_ui(&mut self, ui:&mut SimpleUI<GameUserEvent>) {
         
     }
-    pub fn handle_mouse_state(&mut self, editor_data:&mut TileEditorData, chunks:&mut GameMap<CoolVoxel>) -> Self {
+    pub fn handle_mouse_state(&mut self, editor_data:&mut TileEditorData, chunks:&mut GameMap<CoolVoxel>, tunnels:WorldTunnelsOut<GameMap<CoolVoxel>, CoolGameEngineTID>) -> Self {
         editor_data.mouse_state.update_local();
         let ray = Ray::new(editor_data.cam.pos, Orientation::new(editor_data.cam.orient.yaw - PI/2.0, editor_data.cam.orient.roll - PI/8.0, 0.0), Some(100.0));
         match self {
@@ -82,7 +82,7 @@ impl TileEditingTool {
                     //dbg!(end.final_length);
                     let voxel_types = chunks.get_voxel_types().clone();
                     let mut modified_at = None;
-                    match chunks.get_voxel_at_mut(get_voxel_pos(end.end)) {
+                    match chunks.get_voxel_at(get_voxel_pos(end.end)) {
                         Some(voxel) => {
                             //println!("FOUND A VOXEL");
                             //dbg!(voxel.voxel_id());
@@ -90,7 +90,10 @@ impl TileEditingTool {
                                 editor_data.action_queue.push_back(EditorAction::ModifyVoxel { position: get_voxel_pos(end.end), previous_state:voxel.clone() });
                                 modified_at = Some(get_voxel_pos(end.end));
                                 // chunks.modified_this_pos_signal_remesh(get_voxel_pos(end.end));
-                                voxel.voxel_type = *empty_voxel as u16;
+
+                                let mut new_voxel = voxel.clone();
+                                new_voxel.voxel_type = *empty_voxel as u16;
+                                tunnels.send_event(GameMapEvent::UpdateVoxelAt(get_voxel_pos(end.end), new_voxel));
                                 //println!("TEST");
                             }
                         },
@@ -109,7 +112,7 @@ impl TileEditingTool {
                     //dbg!(end.final_length);
                     let voxel_types = chunks.get_voxel_types().clone();
                     let mut modified_at = None;
-                    match chunks.get_voxel_at_mut(get_voxel_pos(end.end)) {
+                    match chunks.get_voxel_at(get_voxel_pos(end.end)) {
                         Some(voxel) => {
                             //println!("FOUND A VOXEL");
                             //dbg!(voxel.voxel_id());
@@ -117,7 +120,9 @@ impl TileEditingTool {
                                 editor_data.action_queue.push_back(EditorAction::ModifyVoxel { position: get_voxel_pos(end.end), previous_state:voxel.clone() });
                                 modified_at = Some(get_voxel_pos(end.end));
                                 // chunks.modified_this_pos_signal_remesh(get_voxel_pos(end.end));
-                                voxel.voxel_type = *chosen as u16;
+                                let mut new_voxel = voxel.clone();
+                                new_voxel.voxel_type = *chosen as u16;
+                                tunnels.send_event(GameMapEvent::UpdateVoxelAt(get_voxel_pos(end.end), new_voxel));
                             }
                             //println!("TEST");
                         },
@@ -438,11 +443,10 @@ pub enum EditorAction {
 }
 
 impl EditorAction {
-    pub fn reverse_action(self, editor_data:&mut TileEditorData, chunks:&mut GameMap<CoolVoxel>) {
+    pub fn reverse_action(self, editor_data:&mut TileEditorData, chunks:&mut GameMap<CoolVoxel>, tunnels:WorldTunnelsOut<GameMap<CoolVoxel>, CoolGameEngineTID>) {
         match self {
             EditorAction::ModifyVoxel { position, previous_state } => {
-                *chunks.get_voxel_at_mut(position).unwrap() = previous_state;
-                chunks.modified_this_pos_signal_remesh(position);
+                tunnels.send_event(GameMapEvent::UpdateVoxelAt(position, previous_state));
             },
             EditorAction::ChooseTiles { position, added } => {
                 if added {
@@ -454,8 +458,7 @@ impl EditorAction {
             },
             EditorAction::ModifyVoxels { positions_previous } => {
                 for (position, previous_state) in positions_previous {
-                    *chunks.get_voxel_at_mut(position).unwrap() = previous_state;
-                    chunks.modified_this_pos_signal_remesh(position);
+                    tunnels.send_event(GameMapEvent::UpdateVoxelAt(position, previous_state));
                 }
             }
         }
@@ -477,8 +480,8 @@ impl TileEditorData {
             action_queue:VecDeque::with_capacity(128)
         }
     }
-    pub fn do_mouse_handling(&mut self, chunks: &mut GameMap<CoolVoxel>) {
-        let new_tool = self.tools.get(&self.chosen_tool.clone()).unwrap().clone().handle_mouse_state(self, chunks);
+    pub fn do_mouse_handling(&mut self, chunks: &mut GameMap<CoolVoxel>, tunnels:WorldTunnelsOut<GameMap<CoolVoxel>, CoolGameEngineTID>) {
+        let new_tool = self.tools.get(&self.chosen_tool.clone()).unwrap().clone().handle_mouse_state(self, chunks, tunnels);
         *self.tools.get_mut(&self.chosen_tool.clone()).unwrap() = new_tool;
     }
     pub fn do_rendering(&mut self, vectorinator:&Vectorinator<GameShader>, chunks: &GameMap<CoolVoxel>) {
@@ -486,10 +489,10 @@ impl TileEditorData {
         self.ui.change_visibility_of_widgets(tool, true);
         self.tools.get(&self.chosen_tool.clone()).unwrap().add_viewmodel(vectorinator, chunks, self);
     }
-    pub fn handle_keyboard(&mut self, game_input:&GameInputHandler, chunks:&mut GameMap<CoolVoxel>) {
+    pub fn handle_keyboard(&mut self, game_input:&GameInputHandler, chunks:&mut GameMap<CoolVoxel>, tunnels:WorldTunnelsOut<GameMap<CoolVoxel>, CoolGameEngineTID>) {
         if game_input.get_current_keyboard().contains(&Button::Ctrl) && game_input.is_newly_pressed(&Button::Z) && self.action_queue.len() > 0 {
             let latest_action = self.action_queue.pop_back().unwrap();
-            latest_action.reverse_action(self, chunks);
+            latest_action.reverse_action(self, chunks, tunnels);
         } 
     }
     pub fn handle_user_event(&mut self, evt:GameUserEvent) {
@@ -531,7 +534,7 @@ impl TileEditorData {
     pub fn initial_ui_work(&mut self, textures:&Textures) {
         for voxel_type in get_tile_voxels() {
             match voxel_type.texture_path {
-                Some(path) => self.ui.add_image(path, Some(voxel_type.name)),
+                Some(path) => self.ui.add_image(PathBuf::from(path), Some(voxel_type.name)),
                 None => self.ui.add_image_from_id(textures, voxel_type.texture),
             }
         }

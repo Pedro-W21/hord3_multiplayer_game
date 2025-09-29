@@ -2,7 +2,7 @@ use std::time::{Duration, Instant};
 
 use hord3::{defaults::default_ui::simple_ui::{UIDimensions, UIElement, UIUnit, UIVector}, horde::{game_engine::multiplayer::Identify, geometry::rotation::Orientation}};
 
-use crate::game_tasks::GameUserEvent;
+use crate::client::client_tasks::GameUserEvent;
 
 pub struct UIPos {
     pub pos:UIVector,

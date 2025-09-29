@@ -1,10 +1,10 @@
-use std::{path::PathBuf, sync::{atomic::{AtomicUsize, Ordering}, mpmc::Sender, Arc, RwLock}};
+use std::{collections::HashMap, path::PathBuf, sync::{atomic::{AtomicUsize, Ordering}, mpmc::{Sender}, Arc, RwLock}};
 
 use engine_derive::GameEngine;
-use hord3::{defaults::default_rendering::vectorinator_binned::{rendering_spaces::ViewportData, shaders::NoOpShader, Vectorinator}, horde::{game_engine::{engine::{GameEngine, MovingObjectID}, entity::{Entity, EntityVec, MultiplayerEntity, Renderable}, multiplayer::Identify, world::{WorldComputeHandler, WorldHandler, WorldOutHandler, WorldWriteHandler}}, geometry::vec3d::{Vec3D, Vec3Df}, rendering::camera::Camera, scheduler::IndividualTask, sound::{ARWWaves, WavesHandler}}};
+use hord3::{defaults::default_rendering::vectorinator_binned::{rendering_spaces::ViewportData, shaders::NoOpShader, Vectorinator}, horde::{game_engine::{engine::{GameEngine, MovingObjectID}, entity::{Entity, EntityVec, MultiplayerEntity, Renderable}, multiplayer::{GlobalComponent, GlobalEvent, HordeEventReport, HordeMultiModeChoice, HordeMultiplayer, HordeMultiplayerMode, Identify, MultiplayerEngine}, world::{World, WorldComputeHandler, WorldEvent, WorldHandler, WorldOutHandler, WorldWriteHandler}}, geometry::vec3d::{Vec3D, Vec3Df}, rendering::camera::Camera, scheduler::IndividualTask, sound::{ARWWaves, WavesHandler}}};
 use to_from_bytes_derive::{FromBytes, ToBytes};
 
-use crate::{cutscene::{game_shader::GameShader, reverse_camera_coords::reverse_from_raster_to_worldpos}, game_entity::{actions::{ActionsEvent, ActionsUpdate}, colliders::AABB, Collider, ColliderEvent, ColliderEventVariant, GameEntity, GameEntityVecRead, GameEntityVecWrite, MovementEvent, MovementEventVariant}, game_map::{get_voxel_pos, GameMap, GameMapEvent, Voxel, VoxelLight, VoxelModel, VoxelType}, proxima_link::HordeProximaAIRequest};
+use crate::{cutscene::{game_shader::GameShader, reverse_camera_coords::reverse_from_raster_to_worldpos}, game_entity::{actions::{ActionsEvent, ActionsUpdate}, colliders::AABB, Collider, ColliderEvent, ColliderEventVariant, GameEntity, GameEntityEvent, GameEntityVecRead, GameEntityVecWrite, MovementEvent, MovementEventVariant}, game_map::{get_voxel_pos, GameMap, GameMapEvent, Voxel, VoxelLight, VoxelModel, VoxelType}, proxima_link::HordeProximaAIRequest};
 
 
 #[derive(Clone, FromBytes, ToBytes, PartialEq, Debug)]
@@ -12,7 +12,7 @@ pub struct CoolVoxel {
     pub voxel_type:u16,
     pub orient:u8,
     pub light:VoxelLight,
-    pub extra_voxel_data:Option<Vec<ExtraVoxelData>>,
+    //pub extra_voxel_data:Option<Vec<ExtraVoxelData>>,
 }
 
 /// A passage can be
@@ -73,24 +73,24 @@ pub enum ExtraVoxelData {
 
 impl CoolVoxel {
     pub fn new(voxel_type:u16, orient:u8, light:VoxelLight, extra_voxel_data:Option<Vec<ExtraVoxelData>>) -> Self {
-        Self { voxel_type, orient, light, extra_voxel_data }
+        Self { voxel_type, orient, light, }//extra_voxel_data }
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, FromBytes, ToBytes, PartialEq)]
 pub struct CoolVoxelType {
     pub empty_sides:u8,
     pub texture:usize,
     pub light_passthrough:VoxelLight,
     pub is_light_source:Option<VoxelLight>,
     pub name:String,
-    pub texture_path:Option<PathBuf>,
+    pub texture_path:Option<String>,
     pub base_extra_voxel_data:Option<ExtraVoxelData>
 }
 
 impl CoolVoxelType {
     pub fn new(empty_sides:u8, texture:usize, light_passthrough:VoxelLight, is_light_source:Option<VoxelLight>, name:String, texture_path:Option<PathBuf>, base_extra_voxel_data:Option<ExtraVoxelData>) -> Self {
-        Self { empty_sides, texture, light_passthrough, is_light_source, name, texture_path, base_extra_voxel_data }
+        Self { empty_sides, texture, light_passthrough, is_light_source, name, texture_path:texture_path.map(|path| {path.to_string_lossy().to_string()}), base_extra_voxel_data }
     }
 }
 
@@ -230,14 +230,14 @@ fn compute_tick<'a>(turn:EntityTurn, id:usize, first_ent:&GameEntityVecRead<'a, 
                     }
                 }
             }
-            first_ent.tunnels.movement_out.send(MovementEvent::new(id, None, MovementEventVariant::AddToSpeed(total_push)));
+            first_ent.tunnels.movement_out.send(GameEntityEvent::new(true,MovementEvent::new(id, None, MovementEventVariant::AddToSpeed(total_push))));
 
             let actions = &first_ent.actions[id];
             let mut counter = actions.get_counter().clone();
             actions.perform(id, first_ent, second_ent, world, &mut counter, extra_data.tick.load(Ordering::Relaxed));
             first_ent.director[id].do_tick(id, first_ent, second_ent, world, extra_data.tick.load(Ordering::Relaxed), &mut counter);
 
-            first_ent.tunnels.actions_out.send(ActionsEvent::new(id, None, ActionsUpdate::UpdateCounter(counter)));
+            first_ent.tunnels.actions_out.send(GameEntityEvent::new(true,ActionsEvent::new(id, None, ActionsUpdate::UpdateCounter(counter))));
         },
         EntityTurn::entity_2 => {
 
@@ -402,20 +402,21 @@ fn after_main_tick<'a>(turn:EntityTurn, id:usize, first_ent:&GameEntityVecRead<'
                 None => ()
             }
             if touching_ground != movement.touching_ground {
-                first_ent.tunnels.movement_out.send(MovementEvent::new(id, None, MovementEventVariant::UpdateTouchingGround(touching_ground)));
+                first_ent.tunnels.movement_out.send(GameEntityEvent::new(true,MovementEvent::new(id, None, MovementEventVariant::UpdateTouchingGround(touching_ground))));
             }
             if against_wall != movement.against_wall {
-                first_ent.tunnels.movement_out.send(MovementEvent::new(id, None, MovementEventVariant::UpdateAgainstWall(against_wall)));
+                first_ent.tunnels.movement_out.send(GameEntityEvent::new(true,MovementEvent::new(id, None, MovementEventVariant::UpdateAgainstWall(against_wall))));
             }
-            first_ent.tunnels.movement_out.send(MovementEvent::new(id, None, MovementEventVariant::UpdatePos(movement_pos + spd)));
-            first_ent.tunnels.movement_out.send(MovementEvent::new(id, None, MovementEventVariant::UpdateSpeed(spd)));
-            first_ent.tunnels.collider_out.send(ColliderEvent::new(id, None, ColliderEventVariant::UpdateCollider(static_type.collider.init_aabb + (movement_pos + spd ))));
+            first_ent.tunnels.movement_out.send(GameEntityEvent::new(false,MovementEvent::new(id, None, MovementEventVariant::UpdatePos(movement_pos + spd))));
+            first_ent.tunnels.movement_out.send(GameEntityEvent::new(true,MovementEvent::new(id, None, MovementEventVariant::UpdateSpeed(spd))));
+            first_ent.tunnels.collider_out.send(GameEntityEvent::new(true,ColliderEvent::new(id, None, ColliderEventVariant::UpdateCollider(static_type.collider.init_aabb + (movement_pos + spd )))));
             
 
             let planner = &first_ent.planner[id];
             planner.update(id, 100, first_ent, second_ent, world);
             
             first_ent.director[id].do_after_tick(id, first_ent, second_ent, world, &extra_data, extra_data.tick.load(Ordering::Relaxed));
+            
         },
         _ => ()
     }
@@ -429,9 +430,11 @@ pub struct ExtraData {
     pub payload_sender:Sender<HordeProximaAIRequest>,
 }
 
+
 #[derive(GameEngine, Clone)]
 #[rendering_engine = "Vectorinator"]
 #[rendering_engine_generic = "GameShader"]
+#[do_multiplayer]
 pub struct CoolGameEngine {
     entity_1:GameEntity,
     entity_2:GameEntity,

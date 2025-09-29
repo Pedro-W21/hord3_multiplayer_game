@@ -3,7 +3,7 @@ use std::{collections::{HashMap, HashSet, VecDeque}, sync::{LazyLock, OnceLock}}
 use hord3::horde::{game_engine::{entity::{Component, ComponentEvent, StaticComponent}, multiplayer::Identify, world::WorldComputeHandler}, geometry::vec3d::{Vec3D, Vec3Df}};
 use to_from_bytes_derive::{FromBytes, ToBytes};
 
-use crate::{game_engine::{CoolGameEngineTID, CoolVoxel}, game_entity::{actions::{Action, ActionCounter, ActionResult, ActionSource, ActionTimer}, GameEntityVecRead}, game_map::{get_voxel_pos, GameMap}};
+use crate::{game_engine::{CoolGameEngineTID, CoolVoxel}, game_entity::{actions::{Action, ActionCounter, ActionResult, ActionSource, ActionTimer}, GameEntityEvent, GameEntityVecRead}, game_map::{get_voxel_pos, GameMap}};
 
 const DIRECTIONS:[Vec3D<i32> ; 12] = [
     Vec3D::new(1, 0, 0),
@@ -42,10 +42,10 @@ impl Planner {
     ) {
         if self.finished_actions.len() > 0 {
 
-            first_ent.tunnels.planner_out.send(PlannerEvent::new(agent_id, None, PlannerUpdate::FlushFinished));
+            first_ent.tunnels.planner_out.send(GameEntityEvent::new(true,PlannerEvent::new(agent_id, None, PlannerUpdate::FlushFinished)));
             for (finished, result) in &self.finished_actions {
                 match self.get_plan_for_id(finished.get_id()) {
-                    Some(plan) => {first_ent.tunnels.planner_out.send(PlannerEvent::new(agent_id, None, PlannerUpdate::RemovePlanAssociatedTo(plan.plan_action_id)));},
+                    Some(plan) => {first_ent.tunnels.planner_out.send(GameEntityEvent::new(false,PlannerEvent::new(agent_id, None, PlannerUpdate::RemovePlanAssociatedTo(plan.plan_action_id))));},
                     None => ()
                 }
             }
@@ -59,7 +59,7 @@ impl Planner {
                             new_path.reiterate(agent_id, extra_possible_iterations, first_ent, second_ent, world);
                             let mut new_plan = plan.clone();
                             new_plan.plan_data = PlanData::Pathfinding(new_path);
-                            first_ent.tunnels.planner_out.send(PlannerEvent::new(agent_id, None, PlannerUpdate::UpdatePlan(new_plan)));
+                            first_ent.tunnels.planner_out.send(GameEntityEvent::new(false,PlannerEvent::new(agent_id, None, PlannerUpdate::UpdatePlan(new_plan))));
                         }
                         
                     }

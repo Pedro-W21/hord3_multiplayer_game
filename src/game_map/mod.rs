@@ -1,6 +1,7 @@
 use std::{collections::{HashMap, VecDeque}, f32::consts::{PI, SQRT_2}, simd::{num::SimdFloat, Simd}, sync::{Arc, LazyLock}};
 
 use hord3::{defaults::default_rendering::vectorinator_binned::{meshes::{Mesh, MeshID, MeshInstance, MeshLOD, MeshLODS, MeshLODType, MeshTriangles, TrianglePoint}, triangles::{collux_f32_a_u8, collux_one_simd_to_u8_level, collux_u8_a_f32, collux_u8_tuple_to_f32_simd}, Vectorinator, VectorinatorWrite}, horde::{game_engine::{entity::Renderable, multiplayer::Identify, world::{World, WorldEvent}}, geometry::{rotation::{Orientation, Rotation}, vec3d::{Vec3D, Vec3Df}}, rendering::RenderingBackend}, tests::engine_derive_test::TestRB};
+use to_from_bytes::{FromBytes, ToBytes};
 use to_from_bytes_derive::{FromBytes, ToBytes};
 use vec_sparse_grid::{SetGrid, SetGridUpdate};
 
@@ -71,7 +72,7 @@ impl VoxelLight {
     }
 }
 
-pub trait Voxel:Clone + Send + Sync {
+pub trait Voxel:Clone + Send + Sync + ToBytes + FromBytes {
     type VT:VoxelType;
     fn voxel_id(&self) -> usize;
     fn orientation(&self) -> u8;
@@ -112,7 +113,7 @@ pub enum VoxelModel {
     Custom
 }
 
-pub trait VoxelType:Clone + Send + Sync {
+pub trait VoxelType:Clone + Send + Sync + ToBytes + FromBytes {
     fn sides_empty(&self) -> u8;
     fn vertices_taken(&self) -> u8;
     fn kind_of_model(&self) -> VoxelModel;
@@ -231,7 +232,7 @@ const LUT_ROTAT_2:[[u32 ; 6]; 6] = [
 
 const EMPTY_VOXEL:u8 = 0b00111111;
 
-#[derive(Clone)]
+#[derive(Clone, ToBytes, FromBytes, PartialEq)]
 pub struct MapChunk<V:Voxel> {
     voxels:Vec<V>,
     origin_worldpos:WorldVoxelPos,
@@ -241,7 +242,7 @@ pub struct MapChunk<V:Voxel> {
     mesh_instance:Option<usize>,
 }
 
-#[derive(Clone)]
+#[derive(Clone, ToBytes, FromBytes, PartialEq)]
 pub enum GameMapEvent<V:Voxel> {
     UpdateVoxelAt(WorldVoxelPos, V),
     UpdateSetGrid(SetGridUpdate)
@@ -374,7 +375,7 @@ fn make_cube_tris() -> ([[Vec3Df ; 4] ; 6], [usize ; 6], [(f32,f32) ; 4]) {
 
 }
 
-#[derive(Clone)]
+#[derive(Clone, ToBytes, FromBytes, PartialEq)]
 pub struct ChunkDims {
     chunk_width:usize,
     chunk_height:usize,
@@ -511,7 +512,7 @@ impl<V:Voxel> MapChunk<V> {
 }
 
 
-#[derive(Clone)]
+#[derive(Clone, ToBytes, FromBytes, PartialEq)]
 pub struct GameMap<V:Voxel> {
     chunks:HashMap<WorldChunkPos, MapChunk<V>>,
     dims:ChunkDims,
@@ -672,25 +673,17 @@ impl<V:Voxel> GameMap<V> {
                                 full_texture = self.voxel_types[voxel.voxel_id()].easy_texture() as u32;
                                 // assumes that all blocks with textures are full (currently all that's implemented anyway)
                                 any_voxel_full = true;
-                                break 'outer;
+
+                                let empty_dirs = chunk.get_empty_directions_local(Vec3D::new(dx, dy, dz), &self.dims, around, &self.voxel_types);
+                                if empty_dirs & mask == mask {
+                                    any_voxel_needs_face = true;
+                                    break 'outer;
+                                }
                             },
                             None => return None
                         }
                         
                         
-                    }
-                }
-            }
-            if any_voxel_full {
-                'outer : for dx in x..x+step {
-                    for dy in y..y+step {
-                        for dz in z..z+step {
-                            let empty_dirs = chunk.get_empty_directions_local(Vec3D::new(dx, dy, dz), &self.dims, around, &self.voxel_types);
-                            if empty_dirs & mask  == mask { //if a direction is empty (hint:it's a me, Mario)
-                                any_voxel_needs_face = true;
-                                break 'outer;
-                            }
-                        }
                     }
                 }
             }

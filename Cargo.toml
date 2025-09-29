@@ -1,5 +1,5 @@
 [package]
-name = "hord3_test_game"
+name = "hord3_multiplayer_game"
 version = "0.1.0"
 edition = "2024"
 

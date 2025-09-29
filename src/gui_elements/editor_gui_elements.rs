@@ -1,6 +1,6 @@
 use hord3::defaults::default_ui::simple_ui::{UIDimensions, UIElement, UIUnit, UIVector};
 
-use crate::{game_engine::CoolVoxelType, game_tasks::GameUserEvent, gui_elements::image_title_desc::get_image_title_desc};
+use crate::{game_engine::CoolVoxelType, client::client_tasks::GameUserEvent, gui_elements::image_title_desc::get_image_title_desc};
 
 use super::{list_choice::get_list_choice, number_config::get_number_config};
 

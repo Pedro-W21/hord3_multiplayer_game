@@ -5,7 +5,7 @@ use proxima_backend::{ai_interaction::endpoint_api::{EndpointRequestVariant, End
 use serde::de::DeserializeOwned;
 use to_from_bytes_derive::{FromBytes, ToBytes};
 
-use crate::{game_engine::{CoolGameEngineTID, CoolVoxel}, game_entity::{director::{DirectorEvent, DirectorUpdate}, GameEntityVecRead}, game_map::GameMap};
+use crate::{game_engine::{CoolGameEngineTID, CoolVoxel}, game_entity::{director::{DirectorEvent, DirectorUpdate}, GameEntityEvent, GameEntityVecRead}, game_map::GameMap};
 
 pub struct ProximaLink {
     auth_key:String,
@@ -129,10 +129,10 @@ impl HordeProximaAIResponse {
     ) {
         match self.entity_id {
             CoolGameEngineTID::entity_1(id) => {
-                first_ent.tunnels.director_out.send(DirectorEvent::new(id, None, DirectorUpdate::LLMAddToResponses(self.clone())));
+                first_ent.tunnels.director_out.send(GameEntityEvent::new(true, DirectorEvent::new(id, None, DirectorUpdate::LLMAddToResponses(self.clone()))));
             },
             CoolGameEngineTID::entity_2(id) => {
-                second_ent.tunnels.director_out.send(DirectorEvent::new(id, None, DirectorUpdate::LLMAddToResponses(self.clone())));
+                second_ent.tunnels.director_out.send(GameEntityEvent::new(true, DirectorEvent::new(id, None, DirectorUpdate::LLMAddToResponses(self.clone()))));
             },
             _ => ()
         }

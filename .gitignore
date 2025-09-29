@@ -19,4 +19,8 @@ Cargo.lock
 hord3_test_game.code-workspace
 hord3_test_game
 hord3_test_game.d
+
+hord3_multiplayer_game
+hord3_multiplayer_game.d
 design_doc.md
+

@@ -10,7 +10,7 @@ use super::{get_float_pos, WorldVoxelPos};
 
 
 
-#[derive(Clone, ToBytes, FromBytes)]
+#[derive(Clone, ToBytes, FromBytes, PartialEq)]
 pub struct SparseGrid<T: FromBytes + ToBytes> {
     grid:Vec<Option<usize>>,
     data:Vec<T>,
@@ -218,7 +218,7 @@ impl SetGrid {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, ToBytes, FromBytes, PartialEq)]
 pub enum SetGridUpdate {
     AddToSet {grid_slot:usize, vec_index:usize, add:usize},
     RemoveFromSet {grid_slot:usize, vec_index:usize, remove:usize},
