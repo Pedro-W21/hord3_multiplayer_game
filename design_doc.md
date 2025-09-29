@@ -135,3 +135,112 @@ blocs piège :
             - the main thread (or any tick-synchronized thread) has the Receiver<HordeProximaResponse>
                - each tick, receives and creates events filling the prompt vecs of the relevant entities
 
+
+# Fixing multiplayer performance
+- what could be causing issues ?
+- huge function stacks for each byte
+- solution :
+   - decode_bytes_borrow but generalized
+
+- 2 new issues :
+   - data rates (sending too much data in peak times)
+      - for agrees, send only hash of what you want to check
+      - only check
+   - too much TCP desync :
+      - server listens at t1, client sends at t2, listens at t3, server sends at t4
+      - this causes lots of TCP errors as the server may fill buffers and cause window errors
+      - we need streams to always listen and write for both clients and server
+      - new multiplayer architecture :
+         - spin up 1 thread per client (bad ?)
+         - alternate between read + decode and encode + write
+            - encoding can be done from another thread that sends the event to write for example to reduce read downtime to a minimum, same for decodes (though that would require unecessary allocation)
+            - those threads are seperated from the orchestrator
+
+- how to fix all that
+   - make reads timeout on tickrate/2 to reduce syscalls
+
+
+# Game concept : racing battle royale
+
+- multiplayer racing battle royale
+- randomly generated map that is revealed as the players drive on it
+- at the start the road is wide and with few/no obstacles
+- the zone is a road distance to the first place driver, influenced by how far ahead they are
+- start in medias res, air dropped at low but non-zero speeds on the start line
+- "speed stages"
+   - everyone starts with 0 nitro, only pure speed
+   - as we approach the end of stage 0, everyone gets access to nitro, from the people in the back first
+   - there are still speed boosts randomly strewn across the road
+   - by the end of stage 0, everyone has access to nitro
+   - each subsequent stage brings top speed to the speed of the nitro at the start of the previous stage, and nitro is boosted but less fast than the speed increases
+      - makes mistakes more punishing as you go to end the game fastest in the end game
+- different vehicles
+   - trucks
+   - cars
+   - motorcycles
+   - all vehicles should have the same top speed, the main differences would be health/weight/maneuverability/acceleration
+      - health :
+         - lower health = lower top speed, recover health in bursts with repair kits found on the road or slowly over time when not attacked
+         - getting hit by weapons and hitting obstacles (static or moving) = losing health
+      - weight :
+         - more weight = slower health regen
+         - the vehicle with more weight is affected less by a collision than the one with less
+      - maneuverability
+      - acceleration
+
+- different drivers
+   - each driver will have an ability unrelated to speed
+   - e.g. :
+      - translating across the road dash-style
+      - jumping
+      - temporary directional shield
+      - rotating X degrees without losing speed
+      - temporary hover
+      - fireball
+   - all drivers will have a base weapon
+      - all weapons will be fairly inaccurate
+         - only a hail of bullets from people behind first place should work to slow down first place
+      - no timed dropped explosives, would be too favorable to people further up the field
+      - weapons will only be shot from the driver's seat
+         - makes huge trucks unable to handle bikes that get dangerously close
+   - drivers I want to have :
+      - wizard/witch
+      - knight in armor
+      - person in shorts and tshirt
+      - gorilla
+      - cat with a propeller hat
+      - pirate
+      - sweet JP
+      - speed racer
+
+- stage themes
+   - basically the kind of planet the stage happens on, also announced before the game starts
+   - themes include :
+      - city (with different densities through the stage)
+         - very dense would be basically hive cities
+         - neon lighting because of course
+      - nature
+         - lush
+         - desert
+         - dead
+      - caverns
+
+- stage hazards
+   - before the game starts, the hazards are decided and communicated to players as they choose driver/vehicle
+   - hazards include :
+      - temporary fog
+         - makes players drive from the minimap and distance sensors
+         - abilities could make you see through it better
+      - meteor shower
+         - helldivers-style, but leaves obstacles (that may act as ramps !!!)
+      - volcanic activity
+         - replaces water on the stage with lava
+      - earthquakes
+      - short day/night cycle
+      - strong winds/tornadoes
+      - police
+      - wizards
+
+# How do you make vehicle/ground collisions
+
+- 
