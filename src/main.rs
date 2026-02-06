@@ -3,13 +3,13 @@
 #![feature(mpmc_channel)]
 use std::{collections::HashMap, f32::consts::PI, path::PathBuf, simd::Simd, sync::{atomic::{AtomicUsize, Ordering}, mpmc::{self, channel}, Arc, RwLock}, thread, time::{Duration, Instant}};
 
-use game_entity::colliders::AABB;
+use driver::colliders::AABB;
 use cosmic_text::{Color, Font, Metrics};
 use cutscene::{camera_movement::{CameraMovement, CameraMovementDuration, CameraMovementElement, CameraSequence}, demo_cutscene::{get_demo_cutscene, get_empty_cutscene}, game_shader::GameShader, real_demo_cutscene::get_real_demo_cutscene, write_in_the_air::get_positions_of_air_written_text, written_texture::get_written_texture_buffer};
 use day_night::DayNight;
 use game_3d_models::{clustered_ent_mesh, grey_sphere_mesh, lit_selection_cube, second_spread_out_ent_mesh, simple_line, sphere_mesh, spread_out_ent_mesh, textured_sphere_mesh, wireframe_sphere_mesh, xyz_mesh};
 use game_engine::{CoolGameEngineBase, CoolVoxel, CoolVoxelType, ExtraData};
-use game_entity::{Collider, GameEntityVec, Movement, NewGameEntity, StaticCollider, StaticGameEntity, StaticMeshInfo, StaticMovement, StaticStats, Stats};
+use driver::{Collider, GameEntityVec, Movement, NewGameEntity, StaticCollider, StaticGameEntity, StaticMeshInfo, StaticMovement};
 use game_input_handler::GameInputHandler;
 use game_map::{get_f64_pos, get_float_pos, light_spreader::{LightPos, LightSpread}, ChunkDims, GameMap, VoxelLight};
 use gui_elements::{list_choice::get_list_choice, number_config::get_number_config};
@@ -17,11 +17,11 @@ use hord3::{defaults::{default_frontends::minifb_frontend::MiniFBWindow, default
 use noise::{NoiseFn, Perlin, Seedable};
 use tile_editor::{get_tile_voxels, TileEditorData};
 
-use crate::{client::client_func, game_entity::{actions::{Action, ActionKind, ActionSource, ActionTimer, ActionsEvent, ActionsUpdate, StaticGameActions}, director::{llm_director::LLMDirector, Director, DirectorKind, StaticDirector}, planner::StaticPlanner, GameEntityEvent}, game_map::get_voxel_pos, proxima_link::ProximaLink, server::server_func};
+use crate::{client::client_func, driver::{actions::{Action, ActionKind, ActionSource, ActionTimer, ActionsEvent, ActionsUpdate, StaticGameActions}, director::{llm_director::LLMDirector, Director, DirectorKind, StaticDirector}, planner::StaticPlanner, GameEntityEvent}, game_map::get_voxel_pos, proxima_link::ProximaLink, server::server_func};
 
 pub mod game_map;
 pub mod flat_game_map;
-pub mod game_entity;
+pub mod driver;
 pub mod game_engine;
 pub mod game_input_handler;
 pub mod tile_editor;
@@ -33,6 +33,7 @@ pub mod day_night;
 pub mod proxima_link;
 pub mod client;
 pub mod server;
+pub mod vehicle;
 
 fn main() {
     

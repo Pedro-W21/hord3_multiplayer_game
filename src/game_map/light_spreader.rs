@@ -2,7 +2,7 @@ use std::{collections::{HashSet, VecDeque}, hash::Hash};
 
 use hord3::{defaults::default_rendering::vectorinator_binned::triangles::{collux_f32_a_u8, collux_u8_a_f32}, horde::geometry::vec3d::Vec3D};
 
-use crate::{game_engine::CoolVoxel, game_map::VoxelLight};
+use crate::{game_engine::CoolVoxel, game_map::{VoxelLight, road::Road}};
 
 use super::{GameMap, Voxel, VoxelType, EXPLORATION};
 
@@ -32,7 +32,7 @@ pub struct LightSpread {
 }
 
 impl LightSpread {
-    pub fn calc_max_spread(chunks:&GameMap<CoolVoxel>, start_light:LightPos) -> Self {
+    pub fn calc_max_spread(chunks:&GameMap<CoolVoxel, Road>, start_light:LightPos) -> Self {
         let mut positions = HashSet::with_capacity(1024);
         let mut edge_positions = Vec::with_capacity(1);
         let mut spread_limits = HashSet::with_capacity(256);

@@ -1,9 +1,9 @@
 use hord3::horde::geometry::vec3d::Vec3D;
 
-use crate::{game_engine::CoolVoxel, game_map::GameMap};
+use crate::{game_engine::CoolVoxel, game_map::{GameMap, road::Road}};
 
 pub struct Tile {
-    chunks:GameMap<CoolVoxel>,
+    chunks:GameMap<CoolVoxel, Road>,
     enemies:Vec<TileEnemy>
 }
 
@@ -13,7 +13,7 @@ pub struct OutsidePassage {
 }
 
 impl Tile {
-    pub fn new(chunks:GameMap<CoolVoxel>, enemies:Vec<TileEnemy>) -> Self {
+    pub fn new(chunks:GameMap<CoolVoxel, Road>, enemies:Vec<TileEnemy>) -> Self {
         Self { chunks, enemies }
     }
     pub fn get_entries(&self) -> Vec<OutsidePassage> {

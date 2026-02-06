@@ -1,7 +1,7 @@
-use hord3::horde::{game_engine::{entity::{Component, ComponentEvent, StaticComponent}, multiplayer::Identify, world::{WorldComputeHandler, WorldEvent}}, geometry::vec3d::Vec3Df};
+use hord3::horde::{game_engine::{entity::{Component, ComponentEvent, StaticComponent}, multiplayer::{Identify, MustSync}, world::{WorldComputeHandler, WorldEvent}}, geometry::vec3d::Vec3Df};
 use to_from_bytes_derive::{FromBytes, ToBytes};
 
-use crate::{game_engine::{CoolGameEngineTID, CoolVoxel}, game_entity::{director::{Director, DirectorEvent, DirectorUpdate}, planner::{Plan, PlannerEvent, PlannerUpdate}, GameEntityEvent, GameEntityVecRead, MovementEvent, MovementEventVariant}, game_map::{get_voxel_pos, GameMap, GameMapEvent, VoxelLight, VoxelType, WorldVoxelPos}};
+use crate::{driver::{GameEntityEvent, GameEntityVecRead, MovementEvent, MovementEventVariant, director::{Director, DirectorEvent, DirectorUpdate}, planner::{Plan, PlannerEvent, PlannerUpdate}}, game_engine::{CoolGameEngineTID, CoolVoxel}, game_map::{GameMap, GameMapEvent, VoxelLight, VoxelType, WorldVoxelPos, get_voxel_pos, road::Road}, vehicle::{VehicleEntityEvent, VehicleEntityVecRead, locomotion::{DriverAction, LocomotionEvent, LocomotionUpdate}}};
 
 #[derive(Clone, ToBytes, FromBytes, PartialEq, Debug)]
 pub struct Action {
@@ -37,8 +37,8 @@ impl Action {
         &self,
         agent_id:usize,
         first_ent:&GameEntityVecRead<'a, CoolGameEngineTID>,
-        second_ent:&GameEntityVecRead<'a, CoolGameEngineTID>,
-        world:&WorldComputeHandler<GameMap<CoolVoxel>, CoolGameEngineTID>,
+        second_ent:&VehicleEntityVecRead<'a, CoolGameEngineTID>,
+        world:&WorldComputeHandler<GameMap<CoolVoxel, Road>, CoolGameEngineTID>,
         tick:usize
     ) -> bool {
         match self.kind {
@@ -48,14 +48,15 @@ impl Action {
             ActionKind::PathToPosition(position, tolerance) => world.world.get_voxel_at(get_voxel_pos(position)).and_then(|voxel| {if world.world.get_voxel_types()[voxel.voxel_type as usize].is_completely_empty() {Some(true)} else {None}}).is_some(),
             ActionKind::ChangeVoxel(position, _) => world.world.get_chunk_at(world.world.get_chunk_pos_i(position)).is_some(),
             ActionKind::StopAt(pos, _, _) => true,
+            _ => true
         }
     }
     pub fn is_done<'a>(
         &self,
         agent_id:usize,
         first_ent:&GameEntityVecRead<'a, CoolGameEngineTID>,
-        second_ent:&GameEntityVecRead<'a, CoolGameEngineTID>,
-        world:&WorldComputeHandler<GameMap<CoolVoxel>, CoolGameEngineTID>,
+        second_ent:&VehicleEntityVecRead<'a, CoolGameEngineTID>,
+        world:&WorldComputeHandler<GameMap<CoolVoxel, Road>, CoolGameEngineTID>,
         tick:usize
     ) -> bool {
         match self.kind {
@@ -67,25 +68,26 @@ impl Action {
             ActionKind::StopAt(pos, speed_tolerance, pos_tolerance) => {
                 let movement = &first_ent.movement[agent_id];
                 movement.pos.dist(&pos) < pos_tolerance && movement.speed.norme() < speed_tolerance
-            }
+            },
+            _ => false
         }
     }
     pub fn perform<'a>(
         &self,
         agent_id:usize,
         first_ent:&GameEntityVecRead<'a, CoolGameEngineTID>,
-        second_ent:&GameEntityVecRead<'a, CoolGameEngineTID>,
-        world:&WorldComputeHandler<GameMap<CoolVoxel>, CoolGameEngineTID>,
+        second_ent:&VehicleEntityVecRead<'a, CoolGameEngineTID>,
+        world:&WorldComputeHandler<GameMap<CoolVoxel, Road>, CoolGameEngineTID>,
         counter:&mut ActionCounter,
         tick:usize
     ) -> ActionResult {
         if self.timer.timed_out(self.started_at, tick) {
-            first_ent.tunnels.actions_out.send(GameEntityEvent::new(true,ActionsEvent { id: agent_id, source: None, variant: ActionsUpdate::RemoveAction(self.id)}));
+            first_ent.tunnels.actions_out.send(GameEntityEvent::new(MustSync::Server,ActionsEvent { id: agent_id, source: None, variant: ActionsUpdate::RemoveAction(self.id)}));
             ActionResult::FailedTimer
         }
         else if self.is_possible(agent_id, first_ent, second_ent, world, tick) {
             if self.is_done(agent_id, first_ent, second_ent, world, tick) {
-                first_ent.tunnels.actions_out.send(GameEntityEvent::new(true,ActionsEvent { id: agent_id, source: None, variant: ActionsUpdate::RemoveAction(self.id)}));
+                first_ent.tunnels.actions_out.send(GameEntityEvent::new(MustSync::Server,ActionsEvent { id: agent_id, source: None, variant: ActionsUpdate::RemoveAction(self.id)}));
                 ActionResult::Done
             }
             else if self.needs_planning() {
@@ -94,7 +96,7 @@ impl Action {
                     let plan = planner.get_plan_for_id(self.id).unwrap();
                     match plan.get_actions_to_add(counter, tick) {
                         Some(actions) => for action in actions.iter().rev() {
-                            first_ent.tunnels.actions_out.send(GameEntityEvent::new(true,ActionsEvent::new(agent_id, None, ActionsUpdate::InsertActionAtStart(action.clone()))));
+                            first_ent.tunnels.actions_out.send(GameEntityEvent::new(MustSync::Server,ActionsEvent::new(agent_id, None, ActionsUpdate::InsertActionAtStart(action.clone()))));
                         },
                         None => ()
                     }
@@ -108,11 +110,11 @@ impl Action {
                             let actions = plan.get_actions_to_add(counter, tick);
                             match actions {
                                 Some(actions) => for action in actions.iter().rev() {
-                                    first_ent.tunnels.actions_out.send(GameEntityEvent::new(true,ActionsEvent::new(agent_id, None, ActionsUpdate::InsertActionAtStart(action.clone()))));
+                                    first_ent.tunnels.actions_out.send(GameEntityEvent::new(MustSync::Server,ActionsEvent::new(agent_id, None, ActionsUpdate::InsertActionAtStart(action.clone()))));
                                 },
                                 None => ()
                             }
-                            first_ent.tunnels.planner_out.send(GameEntityEvent::new(true,PlannerEvent::new(agent_id, None, PlannerUpdate::AddPlan(plan))));
+                            first_ent.tunnels.planner_out.send(GameEntityEvent::new(MustSync::Server,PlannerEvent::new(agent_id, None, PlannerUpdate::AddPlan(plan))));
 
                             ActionResult::InProgress
                         },
@@ -127,12 +129,12 @@ impl Action {
                         let movement = &first_ent.movement[agent_id];
                         let stats = &first_ent.stats[agent_id];
                         if movement.touching_ground {
-                            first_ent.tunnels.movement_out.send(GameEntityEvent::new(true,MovementEvent::new(agent_id, None, MovementEventVariant::AddToSpeed(Vec3Df::new(0.0, 0.0, stats.jump_height)))));
-                            first_ent.tunnels.actions_out.send(GameEntityEvent::new(true,ActionsEvent { id: agent_id, source: None, variant: ActionsUpdate::RemoveAction(self.id)}));
+                            first_ent.tunnels.movement_out.send(GameEntityEvent::new(MustSync::Server,MovementEvent::new(agent_id, None, MovementEventVariant::AddToSpeed(Vec3Df::new(0.0, 0.0, stats.jump_height)))));
+                            first_ent.tunnels.actions_out.send(GameEntityEvent::new(MustSync::Server,ActionsEvent { id: agent_id, source: None, variant: ActionsUpdate::RemoveAction(self.id)}));
                             ActionResult::Done
                         }
                         else {
-                            first_ent.tunnels.actions_out.send(GameEntityEvent::new(true,ActionsEvent { id: agent_id, source: None, variant: ActionsUpdate::RemoveAction(self.id)}));
+                            first_ent.tunnels.actions_out.send(GameEntityEvent::new(MustSync::Server,ActionsEvent { id: agent_id, source: None, variant: ActionsUpdate::RemoveAction(self.id)}));
                             ActionResult::Error(ActionError::ImpossibleAction)
                         }
                     },
@@ -140,12 +142,12 @@ impl Action {
                         let movement = &first_ent.movement[agent_id];
                         let stats = &first_ent.stats[agent_id];
                         if direction.z != 0.0 && movement.against_wall && movement.touching_ground {
-                            first_ent.tunnels.movement_out.send(GameEntityEvent::new(true,MovementEvent::new(agent_id, None, MovementEventVariant::AddToSpeed(Vec3Df::new(direction.x * stats.ground_speed, direction.y * stats.ground_speed, stats.jump_height)))));
+                            first_ent.tunnels.movement_out.send(GameEntityEvent::new(MustSync::Server,MovementEvent::new(agent_id, None, MovementEventVariant::AddToSpeed(Vec3Df::new(direction.x * stats.ground_speed, direction.y * stats.ground_speed, stats.jump_height)))));
                         }
                         else {
-                            first_ent.tunnels.movement_out.send(GameEntityEvent::new(true,MovementEvent::new(agent_id, None, MovementEventVariant::AddToSpeed(Vec3Df::new(direction.x * stats.ground_speed, direction.y * stats.ground_speed, 0.0)))));
+                            first_ent.tunnels.movement_out.send(GameEntityEvent::new(MustSync::Server,MovementEvent::new(agent_id, None, MovementEventVariant::AddToSpeed(Vec3Df::new(direction.x * stats.ground_speed, direction.y * stats.ground_speed, 0.0)))));
                         }
-                        first_ent.tunnels.actions_out.send(GameEntityEvent::new(true,ActionsEvent::new(agent_id, None, ActionsUpdate::RemoveAction(self.id))));
+                        first_ent.tunnels.actions_out.send(GameEntityEvent::new(MustSync::Server,ActionsEvent::new(agent_id, None, ActionsUpdate::RemoveAction(self.id))));
                         ActionResult::InProgress
                     },
                     ActionKind::MoveTowards(position, tolerance) => {
@@ -155,12 +157,12 @@ impl Action {
                         direction.z = 0.0;
                         direction = direction.normalise();
                         if movement.against_wall {
-                            first_ent.tunnels.movement_out.send(GameEntityEvent::new(true,MovementEvent::new(agent_id, None, MovementEventVariant::AddToSpeed(Vec3Df::new(direction.x * stats.ground_speed, direction.y * stats.ground_speed, stats.jump_height)))));
+                            first_ent.tunnels.movement_out.send(GameEntityEvent::new(MustSync::Server,MovementEvent::new(agent_id, None, MovementEventVariant::AddToSpeed(Vec3Df::new(direction.x * stats.ground_speed, direction.y * stats.ground_speed, stats.jump_height)))));
                         }
                         else {
-                            first_ent.tunnels.movement_out.send(GameEntityEvent::new(true,MovementEvent::new(agent_id, None, MovementEventVariant::AddToSpeed(Vec3Df::new(direction.x * stats.ground_speed, direction.y * stats.ground_speed, 0.0)))));
+                            first_ent.tunnels.movement_out.send(GameEntityEvent::new(MustSync::Server,MovementEvent::new(agent_id, None, MovementEventVariant::AddToSpeed(Vec3Df::new(direction.x * stats.ground_speed, direction.y * stats.ground_speed, 0.0)))));
                         }
-                        first_ent.tunnels.actions_out.send(GameEntityEvent::new(true,ActionsEvent::new(agent_id, None, ActionsUpdate::RemoveAction(self.id))));
+                        first_ent.tunnels.actions_out.send(GameEntityEvent::new(MustSync::Server,ActionsEvent::new(agent_id, None, ActionsUpdate::RemoveAction(self.id))));
                         ActionResult::InProgress
                     },
                     ActionKind::StopAt(pos, spd_tolerance, pos_tolerance) => {
@@ -173,10 +175,10 @@ impl Action {
                             direction.z = 0.0;
                             direction = direction.normalise();
                             if movement.against_wall {
-                                first_ent.tunnels.movement_out.send(GameEntityEvent::new(true,MovementEvent::new(agent_id, None, MovementEventVariant::AddToSpeed(Vec3Df::new(direction.x * stats.ground_speed * 0.2, direction.y * stats.ground_speed * 0.2, stats.jump_height)))));
+                                first_ent.tunnels.movement_out.send(GameEntityEvent::new(MustSync::Server,MovementEvent::new(agent_id, None, MovementEventVariant::AddToSpeed(Vec3Df::new(direction.x * stats.ground_speed * 0.2, direction.y * stats.ground_speed * 0.2, stats.jump_height)))));
                             }
                             else {
-                                first_ent.tunnels.movement_out.send(GameEntityEvent::new(true,MovementEvent::new(agent_id, None, MovementEventVariant::AddToSpeed(Vec3Df::new(direction.x * stats.ground_speed * 0.2, direction.y * stats.ground_speed * 0.2, 0.0)))));
+                                first_ent.tunnels.movement_out.send(GameEntityEvent::new(MustSync::Server,MovementEvent::new(agent_id, None, MovementEventVariant::AddToSpeed(Vec3Df::new(direction.x * stats.ground_speed * 0.2, direction.y * stats.ground_speed * 0.2, 0.0)))));
                             }
                         }
                         else {
@@ -184,22 +186,34 @@ impl Action {
                             let stats = &first_ent.stats[agent_id];
                             direction.z = 0.0;
                             direction = direction.normalise();
-                            first_ent.tunnels.movement_out.send(GameEntityEvent::new(true,MovementEvent::new(agent_id, None, MovementEventVariant::AddToSpeed(Vec3Df::new(direction.x * stats.ground_speed * 0.5, direction.y * stats.ground_speed * 0.5, 0.0)))));
+                            first_ent.tunnels.movement_out.send(GameEntityEvent::new(MustSync::Server,MovementEvent::new(agent_id, None, MovementEventVariant::AddToSpeed(Vec3Df::new(direction.x * stats.ground_speed * 0.5, direction.y * stats.ground_speed * 0.5, 0.0)))));
                         }
 
                         ActionResult::InProgress
                     }
                     ActionKind::ChangeVoxel(voxel_pos, new_voxel) => {
                         world.tunnels.send_event(GameMapEvent::UpdateVoxelAt(voxel_pos.clone(), new_voxel.clone()));
-                        first_ent.tunnels.actions_out.send(GameEntityEvent::new(true,ActionsEvent::new(agent_id, None, ActionsUpdate::RemoveAction(self.id))));
+                        first_ent.tunnels.actions_out.send(GameEntityEvent::new(MustSync::Server,ActionsEvent::new(agent_id, None, ActionsUpdate::RemoveAction(self.id))));
                         ActionResult::Done
                     },
                     ActionKind::PathToPosition(position, tolerance) => ActionResult::Error(ActionError::ImpossibleAction),
+                    other => {
+                        let stats = &first_ent.stats[agent_id];
+                        first_ent.tunnels.actions_out.send(GameEntityEvent::new(MustSync::Server,ActionsEvent { id: agent_id, source: None, variant: ActionsUpdate::RemoveAction(self.id)}));
+                        match stats.personal_vehicle {
+                            Some(vehicle) => {
+                                dbg!(other.clone());
+                                second_ent.tunnels.locomotion_out.send(VehicleEntityEvent::new(MustSync::Server, LocomotionEvent::new(vehicle, Some(CoolGameEngineTID::entity_1(agent_id)), LocomotionUpdate::AddAction(self.clone(), ActionResult::Done)))).unwrap();
+                                ActionResult::Done
+                            },
+                            None => ActionResult::Done
+                        }
+                    }
                 }
             }
         }
         else {
-            first_ent.tunnels.actions_out.send(GameEntityEvent::new(true,ActionsEvent { id: agent_id, source: None, variant: ActionsUpdate::RemoveAction(self.id)}));
+            first_ent.tunnels.actions_out.send(GameEntityEvent::new(MustSync::Server,ActionsEvent { id: agent_id, source: None, variant: ActionsUpdate::RemoveAction(self.id)}));
             ActionResult::Error(ActionError::ImpossibleAction)
         }
     }
@@ -224,7 +238,7 @@ impl ActionTimer {
     }
 }
 
-#[derive(Clone, ToBytes, FromBytes, PartialEq)]
+#[derive(Clone, Debug, ToBytes, FromBytes, PartialEq)]
 pub enum ActionResult {
     Done,
     InProgress,
@@ -232,7 +246,7 @@ pub enum ActionResult {
     Error(ActionError)
 }
 
-#[derive(Clone, ToBytes, FromBytes, PartialEq)]
+#[derive(Clone, Debug, ToBytes, FromBytes, PartialEq)]
 pub enum ActionError {
     ImpossibleAction,
     StartedAfterDeadline
@@ -245,7 +259,11 @@ pub enum ActionKind {
     PathToPosition(Vec3Df, f32),
     MoveTowards(Vec3Df, f32),
     StopAt(Vec3Df, f32, f32),
-    ChangeVoxel(WorldVoxelPos, CoolVoxel)
+    ChangeVoxel(WorldVoxelPos, CoolVoxel),
+    DriverAction(DriverAction),
+    Turn(f32),
+    Throttle(f32),
+    ActivateNitro
 }
 
 #[derive(Clone, ToBytes, FromBytes, PartialEq, Debug)]
@@ -281,8 +299,8 @@ impl Actions {
         &self,
         agent_id:usize,
         first_ent:&GameEntityVecRead<'a, CoolGameEngineTID>,
-        second_ent:&GameEntityVecRead<'a, CoolGameEngineTID>,
-        world:&WorldComputeHandler<GameMap<CoolVoxel>, CoolGameEngineTID>,
+        second_ent:&VehicleEntityVecRead<'a, CoolGameEngineTID>,
+        world:&WorldComputeHandler<GameMap<CoolVoxel, Road>, CoolGameEngineTID>,
         counter:&mut ActionCounter,
         tick:usize
     ) {
@@ -292,8 +310,8 @@ impl Actions {
             match &result {
                 ActionResult::InProgress => (),
                 _ => match action.source {
-                    ActionSource::Planner => first_ent.tunnels.planner_out.send(GameEntityEvent::new(true,PlannerEvent::new(agent_id, None, PlannerUpdate::AddFinished((action.clone(), result))))).unwrap(),
-                    ActionSource::Director => first_ent.tunnels.director_out.send(GameEntityEvent::new(true,DirectorEvent::new(agent_id, None, DirectorUpdate::NotifyFinished((action.clone(), result))))).unwrap(),
+                    ActionSource::Planner => first_ent.tunnels.planner_out.send(GameEntityEvent::new(MustSync::Server,PlannerEvent::new(agent_id, None, PlannerUpdate::AddFinished((action.clone(), result))))).unwrap(),
+                    ActionSource::Director => first_ent.tunnels.director_out.send(GameEntityEvent::new(MustSync::Server,DirectorEvent::new(agent_id, None, DirectorUpdate::NotifyFinished((action.clone(), result))))).unwrap(),
                 }
             }
         }

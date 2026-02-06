@@ -1,9 +1,9 @@
 use std::{collections::HashSet, sync::LazyLock};
 
-use hord3::horde::game_engine::{entity::{Component, ComponentEvent, StaticComponent}, multiplayer::Identify, world::WorldComputeHandler};
+use hord3::horde::game_engine::{entity::{Component, ComponentEvent, StaticComponent}, multiplayer::{Identify, MustSync}, world::WorldComputeHandler};
 use to_from_bytes_derive::{FromBytes, ToBytes};
 
-use crate::{game_engine::{CoolGameEngineTID, CoolVoxel, ExtraData}, game_entity::{actions::{Action, ActionCounter, ActionKind, ActionResult}, director::llm_director::LLMDirector, GameEntityEvent, GameEntityVecRead}, game_map::{get_voxel_pos, GameMap, WorldVoxelPos}, proxima_link::HordeProximaAIResponse};
+use crate::{driver::{GameEntityEvent, GameEntityVecRead, actions::{Action, ActionCounter, ActionKind, ActionResult}, director::llm_director::LLMDirector}, game_engine::{CoolGameEngineTID, CoolVoxel, ExtraData}, game_map::{GameMap, WorldVoxelPos, get_voxel_pos, road::Road}, proxima_link::HordeProximaAIResponse, vehicle::VehicleEntityVecRead};
 
 pub mod llm_director;
 
@@ -41,8 +41,8 @@ impl Director {
         &self,
         agent_id:usize,
         first_ent:&GameEntityVecRead<'a, CoolGameEngineTID>,
-        second_ent:&GameEntityVecRead<'a, CoolGameEngineTID>,
-        world:&WorldComputeHandler<GameMap<CoolVoxel>, CoolGameEngineTID>,
+        second_ent:&VehicleEntityVecRead<'a, CoolGameEngineTID>,
+        world:&WorldComputeHandler<GameMap<CoolVoxel, Road>, CoolGameEngineTID>,
         tick:usize,
         counter:&mut ActionCounter,
     ) {
@@ -50,7 +50,7 @@ impl Director {
             DirectorKind::LLM(llm_director) => {
                 let mut new_director = llm_director.clone();
                 new_director.parse_responses(agent_id, first_ent, second_ent, world, tick, counter);
-                first_ent.tunnels.director_out.send(GameEntityEvent::new(false,DirectorEvent::new(agent_id, None, DirectorUpdate::UpdateKind(DirectorKind::LLM(new_director)))));
+                first_ent.tunnels.director_out.send(GameEntityEvent::new(MustSync::No,DirectorEvent::new(agent_id, None, DirectorUpdate::UpdateKind(DirectorKind::LLM(new_director)))));
             },
             _ => ()
         }
@@ -60,8 +60,8 @@ impl Director {
         &self,
         agent_id:usize,
         first_ent:&GameEntityVecRead<'a, CoolGameEngineTID>,
-        second_ent:&GameEntityVecRead<'a, CoolGameEngineTID>,
-        world:&WorldComputeHandler<GameMap<CoolVoxel>, CoolGameEngineTID>,
+        second_ent:&VehicleEntityVecRead<'a, CoolGameEngineTID>,
+        world:&WorldComputeHandler<GameMap<CoolVoxel, Road>, CoolGameEngineTID>,
         extra_data:&ExtraData,
         tick:usize,
     ) {
@@ -111,10 +111,10 @@ impl Director {
                     Some(payload) => {extra_data.payload_sender.send(payload);},
                     None => ()
                 }
-                first_ent.tunnels.director_out.send(GameEntityEvent::new(false,DirectorEvent::new(agent_id, None, DirectorUpdate::UpdateKind(DirectorKind::LLM(new_director)))));
-                first_ent.tunnels.director_out.send(GameEntityEvent::new(false,DirectorEvent::new(agent_id, None, DirectorUpdate::FlushAlerts)));
+                first_ent.tunnels.director_out.send(GameEntityEvent::new(MustSync::No,DirectorEvent::new(agent_id, None, DirectorUpdate::UpdateKind(DirectorKind::LLM(new_director)))));
+                first_ent.tunnels.director_out.send(GameEntityEvent::new(MustSync::No,DirectorEvent::new(agent_id, None, DirectorUpdate::FlushAlerts)));
                 if self.finished_actions.len() > 0 {
-                    first_ent.tunnels.director_out.send(GameEntityEvent::new(false,DirectorEvent::new(agent_id, None, DirectorUpdate::FlushFinished)));
+                    first_ent.tunnels.director_out.send(GameEntityEvent::new(MustSync::No,DirectorEvent::new(agent_id, None, DirectorUpdate::FlushFinished)));
                 }
             },
             _ => ()

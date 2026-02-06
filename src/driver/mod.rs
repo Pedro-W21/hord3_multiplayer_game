@@ -1,13 +1,14 @@
 use entity_derive::Entity;
-use hord3::{defaults::default_rendering::vectorinator_binned::{meshes::{Mesh, MeshID, MeshInstance}, VectorinatorWrite}, horde::{game_engine::{entity::{Component, ComponentEvent, EVecStopsIn, EVecStopsOut, Entity, EntityID, EntityVec, MultiplayerEntity, NewEntity, StaticComponent, StaticEntity}, multiplayer::Identify, position::EntityPosition, static_type_id::HasStaticTypeID}, geometry::{rotation::{Orientation, Rotation}, vec3d::Vec3Df}}};
+use hord3::{defaults::default_rendering::vectorinator_binned::{VectorinatorWrite, meshes::{Mesh, MeshID, MeshInstance}}, horde::{game_engine::{entity::{Component, ComponentEvent, EVecStopsIn, EVecStopsOut, Entity, EntityID, EntityVec, MultiplayerEntity, NewEntity, StaticComponent, StaticEntity}, multiplayer::{Identify, MustSync}, position::EntityPosition, static_type_id::HasStaticTypeID}, geometry::{rotation::{Orientation, Rotation}, vec3d::Vec3Df}}};
 use to_from_bytes_derive::{FromBytes, ToBytes};
 
-use crate::game_entity::{actions::Actions, colliders::AABB, director::Director, planner::Planner};
+use crate::driver::{actions::Actions, colliders::AABB, director::Director, planner::Planner, stats::Stats};
 pub mod cutscene_support;
 pub mod colliders;
 pub mod actions;
 pub mod director;
 pub mod planner;
+pub mod stats;
 
 
 #[derive(Clone, Debug, PartialEq, ToBytes, FromBytes)]
@@ -201,72 +202,9 @@ impl<ID:Identify> Component<ID> for MeshInfo {
 }
 
 
-#[derive(Clone, PartialEq, ToBytes, FromBytes)]
-pub struct Stats {
-    pub static_type_id:usize,
-    pub health:i32,
-    pub damage:i32,
-    pub stamina:i32,
-    pub ground_speed:f32,
-    pub jump_height:f32,
-}
-
-#[derive(Clone, ToBytes, FromBytes, PartialEq)]
-pub struct StatEvent<ID:Identify> {
-    id:usize,
-    source:Option<ID>,
-    variant:StatEventVariant
-}
-
-#[derive(Clone, ToBytes, FromBytes, PartialEq)]
-pub enum StatEventVariant {
-    UpdateHealth(i32),
-    UpdateDamage(i32),
-    UpdateStamina(i32)
-}
-
-#[derive(Clone)]
-pub struct StaticStats {
-    
-}
-
-impl StaticComponent for StaticStats {
-
-}
-
-impl<ID:Identify> ComponentEvent<Stats, ID> for StatEvent<ID> {
-    type ComponentUpdate = StatEventVariant;
-    fn get_id(&self) -> EntityID {
-        self.id
-    }
-    fn get_source(&self) -> Option<ID> {
-        self.source.clone()
-    }
-    fn apply_to_component(self, components:&mut Vec<Stats>) {
-        match self.variant {
-            StatEventVariant::UpdateDamage(new_dmg) => components[self.id].damage = new_dmg,
-            StatEventVariant::UpdateHealth(new_health) => components[self.id].health = new_health,
-            StatEventVariant::UpdateStamina(new_stam) => components[self.id].stamina = new_stam,
-        }
-    }
-}
-
-impl<ID:Identify> Component<ID> for Stats {
-    type CE = StatEvent<ID>;
-    type SC = StaticStats;
-    fn from_static(static_comp:&Self::SC) -> Self {
-        Self { static_type_id: 0, health: 0, damage: 0, stamina: 0, jump_height:1.0, ground_speed:0.2 }
-    }
-}
-
-impl HasStaticTypeID for Stats {
-    fn get_id(&self) -> usize {
-        self.static_type_id
-    }
-}
 
 impl<ID:Identify> NewEntity<GameEntity,ID> for NewGameEntity<ID> {
-    fn get_ent(self) -> GameEntity {
+    fn get_ent(self, static_type:&StaticGameEntity<ID>) -> GameEntity {
         GameEntity {
             movement:self.movement,
             stats:self.stats,

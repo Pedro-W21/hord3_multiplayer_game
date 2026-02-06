@@ -3,7 +3,7 @@ use core::f32;
 
 use hord3::horde::geometry::{rotation::Orientation, vec3d::Vec3Df};
 
-use crate::game_engine::CoolVoxel;
+use crate::{game_engine::CoolVoxel, game_map::road::Road};
 
 use super::{get_voxel_pos, GameMap, VoxelType};
 
@@ -12,7 +12,7 @@ const PRECISION:f32 = 0.25;
 
 pub struct Ray {
     start:Vec3Df,
-    direction:Orientation,
+    direction:Vec3Df,
     max_length:Option<f32>
 }
 
@@ -22,12 +22,12 @@ pub struct RayEnd {
 }
 
 impl Ray {
-    pub fn new(start:Vec3Df, direction:Orientation, max_length:Option<f32>) -> Self {
+    pub fn new(start:Vec3Df, direction:Vec3Df, max_length:Option<f32>) -> Self {
         Self { start, direction, max_length }
     }
-    pub fn get_end(&self, chunks:&GameMap<CoolVoxel>) -> RayEnd {
+    pub fn get_end(&self, chunks:&GameMap<CoolVoxel, Road>) -> RayEnd {
         let mut test = self.start.clone();
-        let mut dir = self.direction.into_vec() * PRECISION;
+        let mut dir = self.direction * PRECISION;
         let max_length = self.max_length.unwrap_or(f32::INFINITY);
         let mut length = 0.0;
         //dbg!(dir);
@@ -37,14 +37,14 @@ impl Ray {
         }
         return RayEnd { end:test, final_length:length }
     }
-    pub fn get_first_back_different(&self, chunks:&GameMap<CoolVoxel>, end:Option<RayEnd>) -> RayEnd {
+    pub fn get_first_back_different(&self, chunks:&GameMap<CoolVoxel, Road>, end:Option<RayEnd>) -> RayEnd {
         match end {
             Some(end) => {
-                RayEnd {end:end.end - self.direction.into_vec() * PRECISION, final_length:end.final_length - PRECISION}
+                RayEnd {end:end.end - self.direction * PRECISION, final_length:end.final_length - PRECISION}
             },
             None => {
                 let end = self.get_end(chunks);
-                let new_end = end.end - self.direction.into_vec() * PRECISION;
+                let new_end = end.end - self.direction * PRECISION;
                 RayEnd {end:new_end, final_length:end.final_length - PRECISION}
             }
         }

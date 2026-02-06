@@ -3,7 +3,7 @@ use std::{collections::{HashMap, HashSet, VecDeque}, f32::consts::{PI, SQRT_2}, 
 use cosmic_text::{Color, Metrics};
 use hord3::{defaults::{default_rendering::vectorinator_binned::{meshes::{Mesh, MeshID, MeshInstance, MeshLODS, MeshLODType}, shaders::NoOpShader, textures::Textures, Vectorinator}, default_ui::simple_ui::{SimpleUI, SimpleUISave, TextCentering, UIElement, UIElementBackground, UIElementContent, UIElementID}}, horde::{frontend::{interact::Button, MouseState}, game_engine::{multiplayer::Identify, world::WorldTunnelsOut}, geometry::{rotation::Orientation, vec3d::{Vec3D, Vec3Df}}, rendering::camera::Camera}};
 
-use crate::{client::client_tasks::GameUserEvent, cutscene::game_shader::GameShader, game_3d_models::{lit_selection_cube, selection_cube}, game_engine::{CoolGameEngineTID, CoolVoxel, CoolVoxelType}, game_input_handler::GameInputHandler, game_map::{get_chunk_pos_i, get_float_pos, get_voxel_pos, light_spreader::{LightPos, LightSpread}, raycaster::Ray, GameMap, GameMapEvent, Voxel, VoxelLight, WorldChunkPos, WorldVoxelPos}, gui_elements::{editor_gui_elements::{light_spreader_elts, voxel_type_choice}, list_choice}};
+use crate::{client::client_tasks::GameUserEvent, cutscene::game_shader::GameShader, game_3d_models::{lit_selection_cube, selection_cube}, game_engine::{CoolGameEngineTID, CoolVoxel, CoolVoxelType}, game_input_handler::GameInputHandler, game_map::{GameMap, GameMapEvent, Voxel, VoxelLight, WorldChunkPos, WorldVoxelPos, get_chunk_pos_i, get_float_pos, get_voxel_pos, light_spreader::{LightPos, LightSpread}, raycaster::Ray, road::Road}, gui_elements::{editor_gui_elements::{light_spreader_elts, voxel_type_choice}, list_choice}, vehicle::locomotion::SurfaceType};
 
 
 pub const CHUNK_SIZE:usize = 8;
@@ -11,17 +11,17 @@ pub const CHUNK_SIZE_F:f32 = CHUNK_SIZE as f32;
 
 pub fn get_tile_voxels() -> Vec<CoolVoxelType> {
     vec![
-        CoolVoxelType::new(0b00111111, 0, VoxelLight::new(247, 255, 255, 255), None, "Air".to_string(), Some(PathBuf::from("textures/arbre.png")), None),
-        CoolVoxelType::new(0, 1, VoxelLight::zero_light(), None, "Sand".to_string(), Some(PathBuf::from("textures/sable.png")), None),
-        CoolVoxelType::new(0, 2, VoxelLight::zero_light(), None, "Flowers".to_string(), Some(PathBuf::from("textures/terre_herbe.png")), None),
-        CoolVoxelType::new(0, 3, VoxelLight::zero_light(), None, "Grassy Ground".to_string(), Some(PathBuf::from("textures/terre_cail.png")), None),
-        CoolVoxelType::new(0, 4, VoxelLight::zero_light(), None, "Ground".to_string(), Some(PathBuf::from("textures/terre.png")), None),
-        CoolVoxelType::new(0, 5, VoxelLight::zero_light(), None, "Rock".to_string(), Some(PathBuf::from("textures/roche.png")), None),
-        CoolVoxelType::new(0, 0, VoxelLight::zero_light(), None, "Snow".to_string(), Some(PathBuf::from("textures/neige.png")), None),
-        CoolVoxelType::new(0, 6, VoxelLight::zero_light(), None, "Water".to_string(), Some(PathBuf::from("textures/eau.png")), None),
-        CoolVoxelType::new(0, 7, VoxelLight::zero_light(), None, "Deep Water".to_string(), Some(PathBuf::from("textures/eau_prof.png")), None),
-        CoolVoxelType::new(0, 8, VoxelLight::zero_light(), None, "Metal".to_string(), Some(PathBuf::from("textures/metal_0.png")), None),
-        CoolVoxelType::new(0, 3, VoxelLight::zero_light(), None, "Text Test".to_string(), None, None),
+        CoolVoxelType::new(0b00111111, 0, VoxelLight::new(247, 255, 255, 255), None, "Air".to_string(), Some(PathBuf::from("textures/arbre.png")), None, None),
+        CoolVoxelType::new(0, 1, VoxelLight::zero_light(), None, "Sand".to_string(), Some(PathBuf::from("textures/sable.png")), None, Some(SurfaceType::Ground)),
+        CoolVoxelType::new(0, 2, VoxelLight::zero_light(), None, "Flowers".to_string(), Some(PathBuf::from("textures/terre_herbe.png")), None, Some(SurfaceType::Ground)),
+        CoolVoxelType::new(0, 3, VoxelLight::zero_light(), None, "Grassy Ground".to_string(), Some(PathBuf::from("textures/terre_cail.png")), None, Some(SurfaceType::Ground)),
+        CoolVoxelType::new(0, 4, VoxelLight::zero_light(), None, "Ground".to_string(), Some(PathBuf::from("textures/terre.png")), None, Some(SurfaceType::Ground)),
+        CoolVoxelType::new(0, 5, VoxelLight::zero_light(), None, "Rock".to_string(), Some(PathBuf::from("textures/roche.png")), None, Some(SurfaceType::Ground)),
+        CoolVoxelType::new(0, 0, VoxelLight::zero_light(), None, "Snow".to_string(), Some(PathBuf::from("textures/neige.png")), None, Some(SurfaceType::Ground)),
+        CoolVoxelType::new(0, 6, VoxelLight::zero_light(), None, "Water".to_string(), Some(PathBuf::from("textures/eau.png")), None, Some(SurfaceType::Water)),
+        CoolVoxelType::new(0, 7, VoxelLight::zero_light(), None, "Deep Water".to_string(), Some(PathBuf::from("textures/eau_prof.png")), None, Some(SurfaceType::Water)),
+        CoolVoxelType::new(0, 8, VoxelLight::zero_light(), None, "Metal".to_string(), Some(PathBuf::from("textures/metal_0.png")), None, Some(SurfaceType::Ground)),
+        CoolVoxelType::new(0, 3, VoxelLight::zero_light(), None, "Text Test".to_string(), None, None, Some(SurfaceType::Ground)),
     ]
 }
 
@@ -72,9 +72,9 @@ impl TileEditingTool {
     pub fn update_ui(&mut self, ui:&mut SimpleUI<GameUserEvent>) {
         
     }
-    pub fn handle_mouse_state(&mut self, editor_data:&mut TileEditorData, chunks:&mut GameMap<CoolVoxel>, tunnels:WorldTunnelsOut<GameMap<CoolVoxel>, CoolGameEngineTID>) -> Self {
+    pub fn handle_mouse_state(&mut self, editor_data:&mut TileEditorData, chunks:&mut GameMap<CoolVoxel, Road>, tunnels:WorldTunnelsOut<GameMap<CoolVoxel, Road>, CoolGameEngineTID>) -> Self {
         editor_data.mouse_state.update_local();
-        let ray = Ray::new(editor_data.cam.pos, Orientation::new(editor_data.cam.orient.yaw - PI/2.0, editor_data.cam.orient.roll - PI/8.0, 0.0), Some(100.0));
+        let ray = Ray::new(editor_data.cam.pos, Orientation::new(editor_data.cam.orient.yaw - PI/2.0, editor_data.cam.orient.roll - PI/8.0, 0.0).into_vec(), Some(100.0));
         match self {
             TileEditingTool::PlaceAndDestroy {chosen, empty_voxel } => {
                 if editor_data.mouse_state.get_deltas_and_scroll().left >= 2 { // Destroy
@@ -279,10 +279,10 @@ impl TileEditingTool {
             }
         }
     }
-    pub fn add_viewmodel(&self, vectorinator:&Vectorinator<GameShader>, chunks:&GameMap<CoolVoxel>, editor_data:&TileEditorData) {
+    pub fn add_viewmodel(&self, vectorinator:&Vectorinator<GameShader>, chunks:&GameMap<CoolVoxel, Road>, editor_data:&TileEditorData) {
 
         let mut write = vectorinator.get_write();
-        let ray = Ray::new(editor_data.cam.pos, Orientation::new(editor_data.cam.orient.yaw - PI/2.0, editor_data.cam.orient.roll - PI/8.0, 0.0), Some(100.0));
+        let ray = Ray::new(editor_data.cam.pos, Orientation::new(editor_data.cam.orient.yaw - PI/2.0, editor_data.cam.orient.roll - PI/8.0, 0.0).into_vec(), Some(100.0));
         let ray_end = ray.get_end(chunks);
 
 
@@ -443,7 +443,7 @@ pub enum EditorAction {
 }
 
 impl EditorAction {
-    pub fn reverse_action(self, editor_data:&mut TileEditorData, chunks:&mut GameMap<CoolVoxel>, tunnels:WorldTunnelsOut<GameMap<CoolVoxel>, CoolGameEngineTID>) {
+    pub fn reverse_action(self, editor_data:&mut TileEditorData, chunks:&mut GameMap<CoolVoxel, Road>, tunnels:WorldTunnelsOut<GameMap<CoolVoxel, Road>, CoolGameEngineTID>) {
         match self {
             EditorAction::ModifyVoxel { position, previous_state } => {
                 tunnels.send_event(GameMapEvent::UpdateVoxelAt(position, previous_state));
@@ -480,16 +480,16 @@ impl TileEditorData {
             action_queue:VecDeque::with_capacity(128)
         }
     }
-    pub fn do_mouse_handling(&mut self, chunks: &mut GameMap<CoolVoxel>, tunnels:WorldTunnelsOut<GameMap<CoolVoxel>, CoolGameEngineTID>) {
+    pub fn do_mouse_handling(&mut self, chunks: &mut GameMap<CoolVoxel, Road>, tunnels:WorldTunnelsOut<GameMap<CoolVoxel, Road>, CoolGameEngineTID>) {
         let new_tool = self.tools.get(&self.chosen_tool.clone()).unwrap().clone().handle_mouse_state(self, chunks, tunnels);
         *self.tools.get_mut(&self.chosen_tool.clone()).unwrap() = new_tool;
     }
-    pub fn do_rendering(&mut self, vectorinator:&Vectorinator<GameShader>, chunks: &GameMap<CoolVoxel>) {
+    pub fn do_rendering(&mut self, vectorinator:&Vectorinator<GameShader>, chunks: &GameMap<CoolVoxel, Road>) {
         let tool = self.tools.get(&self.chosen_tool.clone()).unwrap().ui_elems();
         self.ui.change_visibility_of_widgets(tool, true);
         self.tools.get(&self.chosen_tool.clone()).unwrap().add_viewmodel(vectorinator, chunks, self);
     }
-    pub fn handle_keyboard(&mut self, game_input:&GameInputHandler, chunks:&mut GameMap<CoolVoxel>, tunnels:WorldTunnelsOut<GameMap<CoolVoxel>, CoolGameEngineTID>) {
+    pub fn handle_keyboard(&mut self, game_input:&GameInputHandler, chunks:&mut GameMap<CoolVoxel, Road>, tunnels:WorldTunnelsOut<GameMap<CoolVoxel, Road>, CoolGameEngineTID>) {
         if game_input.get_current_keyboard().contains(&Button::Ctrl) && game_input.is_newly_pressed(&Button::Z) && self.action_queue.len() > 0 {
             let latest_action = self.action_queue.pop_back().unwrap();
             latest_action.reverse_action(self, chunks, tunnels);

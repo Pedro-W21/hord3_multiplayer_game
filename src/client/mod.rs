@@ -1,27 +1,27 @@
 
 use std::{collections::HashMap, f32::consts::PI, net::Ipv4Addr, path::PathBuf, simd::Simd, sync::{atomic::{AtomicUsize, Ordering}, mpmc::{self, channel}, Arc, RwLock}, thread, time::{Duration, Instant}};
 
-use crate::{client::client_tasks::GameUserEvent, game_entity::colliders::AABB};
+use crate::{client::client_tasks::GameUserEvent, driver::{colliders::AABB, stats::{StaticStats, Stats}}, game_map::road::Road, vehicle::{NewVehicleEntity, VehicleEntityVec, default_vehicles::default_car::get_default_car_type, position::VehiclePosition, vehicle_stats::VehicleStats}};
 use cosmic_text::{Color, Font, Metrics};
 use crate::cutscene::{camera_movement::{CameraMovement, CameraMovementDuration, CameraMovementElement, CameraSequence}, demo_cutscene::{get_demo_cutscene, get_empty_cutscene}, game_shader::GameShader, real_demo_cutscene::get_real_demo_cutscene, write_in_the_air::get_positions_of_air_written_text, written_texture::get_written_texture_buffer};
 use crate::day_night::DayNight;
 use crate::game_3d_models::{clustered_ent_mesh, grey_sphere_mesh, lit_selection_cube, second_spread_out_ent_mesh, simple_line, sphere_mesh, spread_out_ent_mesh, textured_sphere_mesh, wireframe_sphere_mesh, xyz_mesh};
 use crate::game_engine::{CoolGameEngineBase, CoolVoxel, CoolVoxelType, ExtraData};
-use crate::game_entity::{Collider, GameEntityVec, Movement, NewGameEntity, StaticCollider, StaticGameEntity, StaticMeshInfo, StaticMovement, StaticStats, Stats};
+use crate::driver::{Collider, GameEntityVec, Movement, NewGameEntity, StaticCollider, StaticGameEntity, StaticMeshInfo, StaticMovement};
 use crate::game_input_handler::GameInputHandler;
 use crate::game_map::{get_f64_pos, get_float_pos, light_spreader::{LightPos, LightSpread}, ChunkDims, GameMap, VoxelLight};
 use crate::gui_elements::{list_choice::get_list_choice, number_config::get_number_config};
-use hord3::{defaults::{default_frontends::minifb_frontend::MiniFBWindow, default_rendering::vectorinator_binned::{meshes::{Mesh, MeshID, MeshLODS, MeshLODType}, rendering_spaces::ViewportData, shaders::NoOpShader, textures::{argb_to_rgb, rgb_to_argb, TextureSetID}, triangles::{color_u32_to_u8_simd, simd_rgb_to_argb}, Vectorinator}, default_ui::simple_ui::{SimpleUI, UIDimensions, UIElement, UIElementBackground, UIElementContent, UIElementID, UIEvent, UIUnit, UIUserAction, UIVector}}, horde::{frontend::{HordeWindowDimensions, WindowingHandler}, game_engine::{entity::Renderable, multiplayer::HordeMultiModeChoice, world::{WorldComputeHandler, WorldHandler}}, geometry::{plane::EquationPlane, rotation::{Orientation, Rotation}, vec3d::{Vec3D, Vec3Df}}, rendering::{camera::Camera, framebuffer::HordeColorFormat}, scheduler::{HordeScheduler, HordeTaskQueue, HordeTaskSequence, SequencedTask}, sound::{SoundRequest, WaveIdentification, WavePosition, WaveRequest, WaveSink, Waves}}};
+use hord3::{defaults::{default_frontends::minifb_frontend::MiniFBWindow, default_rendering::vectorinator_binned::{Vectorinator, meshes::{Mesh, MeshID, MeshLODS, MeshLODType}, rendering_spaces::ViewportData, shaders::NoOpShader, textures::{TextureSetID, argb_to_rgb, rgb_to_argb}, triangles::{color_u32_to_u8_simd, simd_rgb_to_argb}}, default_ui::simple_ui::{SimpleUI, UIDimensions, UIElement, UIElementBackground, UIElementContent, UIElementID, UIEvent, UIUnit, UIUserAction, UIVector}}, horde::{frontend::{HordeWindowDimensions, WindowingHandler}, game_engine::{entity::Renderable, multiplayer::{HordeMultiModeChoice, MustSync}, world::{WorldComputeHandler, WorldHandler}}, geometry::{plane::EquationPlane, rotation::{Orientation, Rotation}, vec3d::{Vec3D, Vec3Df}}, rendering::{camera::Camera, framebuffer::HordeColorFormat}, scheduler::{HordeScheduler, HordeTaskQueue, HordeTaskSequence, SequencedTask}, sound::{SoundRequest, WaveIdentification, WavePosition, WaveRequest, WaveSink, Waves}}};
 use noise::{NoiseFn, Perlin, Seedable};
 use crate::tile_editor::{get_tile_voxels, TileEditorData};
 use client_tasks::{ClientTask, ClientTaskTaskHandler};
 
-use crate::{game_entity::{actions::{Action, ActionKind, ActionSource, ActionTimer, ActionsEvent, ActionsUpdate, StaticGameActions}, director::{llm_director::LLMDirector, Director, DirectorKind, StaticDirector}, planner::StaticPlanner, GameEntityEvent}, game_map::get_voxel_pos, proxima_link::ProximaLink};
+use crate::{driver::{actions::{Action, ActionKind, ActionSource, ActionTimer, ActionsEvent, ActionsUpdate, StaticGameActions}, director::{llm_director::LLMDirector, Director, DirectorKind, StaticDirector}, planner::StaticPlanner, GameEntityEvent}, game_map::get_voxel_pos, proxima_link::ProximaLink};
 
 pub mod client_tasks;
 
 pub fn client_func() {
-    let mut world = GameMap::new(100, ChunkDims::new(8, 8, 8), get_tile_voxels(), (255,255,255), 1);
+    let mut world = GameMap::new(100, ChunkDims::new(8, 8, 8), get_tile_voxels(), (255,255,255), 1, Road::new(Vec3D::zero(), Vec3Df::new(1.0, 0.0, 0.0)));
     let mut perlin = Perlin::new().set_seed(13095);
     let mut world_height = 15.0;
     let mut water_level = 10.0;
@@ -112,7 +112,7 @@ pub fn client_func() {
 
         for i in 0..1 {
             let pos = Vec3D::new((fastrand::f32() - 0.5) * 2.0 * 150.0, (fastrand::f32() - 0.5) * 2.0 * 150.0, 150.0);
-            writer.new_ent(NewGameEntity::new(Movement{against_wall:false, touching_ground:false,pos:pos, speed:Vec3D::zero(), orient:Orientation::zero(), rotat:Rotation::from_orientation(Orientation::zero())}, Stats {static_type_id:1, health:0, damage:0, stamina:0, ground_speed:0.2, jump_height:1.0}, Collider{team:0, collider:AABB::new(pos - Vec3D::all_ones() * 0.5, pos + Vec3D::all_ones() * 0.5)}, Director::new_with_random_name(DirectorKind::LLM(LLMDirector::new_with_goals(fastrand::choice(test_goals.iter()).unwrap().clone()))), true, None));
+            writer.new_ent(NewGameEntity::new(Movement{against_wall:false, touching_ground:false,pos:pos, speed:Vec3D::zero(), orient:Orientation::zero(), rotat:Rotation::from_orientation(Orientation::zero())}, Stats {static_type_id:1, health:0, damage:0, stamina:0, ground_speed:0.2, jump_height:1.0, personal_vehicle:None}, Collider{team:0, collider:AABB::new(pos - Vec3D::all_ones() * 0.5, pos + Vec3D::all_ones() * 0.5)}, Director::new_with_random_name(DirectorKind::LLM(LLMDirector::new_with_goals(fastrand::choice(test_goals.iter()).unwrap().clone()))), MustSync::No, None));
             //writer.new_ent(NewGameEntity::new(Movement{against_wall:false, touching_ground:false,pos:pos, speed:Vec3D::zero(), orient:Orientation::zero(), rotat:Rotation::from_orientation(Orientation::zero())}, Stats {static_type_id:1, health:0, damage:0, stamina:0, ground_speed:0.2, jump_height:1.0}, Collider{team:0, collider:AABB::new(pos - Vec3D::all_ones() * 0.5, pos + Vec3D::all_ones() * 0.5)}, Director::new_with_random_name(DirectorKind::LLM(LLMDirector::new_with_goals(test_goals[i].clone())))));
         }
 
@@ -127,8 +127,13 @@ pub fn client_func() {
         Err(_) => (mpmc::channel().0, mpmc::channel().1)
     };
     
-    let entity_vec_2 = GameEntityVec::new(1000);
-    
+    let entity_vec_2 = VehicleEntityVec::new(1000);
+    {
+        let mut writer = entity_vec_2.get_write();
+        writer.new_sct(get_default_car_type());
+
+        writer.new_ent(NewVehicleEntity::new(VehiclePosition::new().with_pos(Vec3Df::new(0.0, 0.0, 40.0)), VehicleStats {static_id:0, nitro_left:100.0, mass:10.0},  MustSync::No, None));
+    }
     let windowing = WindowingHandler::new::<MiniFBWindow>(HordeWindowDimensions::new(1280, 720), HordeColorFormat::ARGB8888);
     let framebuf = windowing.get_outside_framebuf();
     let mut shader = Arc::new(GameShader::new_default());
@@ -453,7 +458,7 @@ pub fn client_func() {
         };
         {
             let first_ent = engine.entity_1.get_read();
-            let second_ent = engine.entity_2.get_read();
+            let second_ent = engine.vehicles.get_read();
             let world = WorldComputeHandler::from_world_handler(&engine.world);
             loop {
                 match response_receiver.try_recv() {
@@ -484,8 +489,8 @@ pub fn client_func() {
         let frametime = Instant::now().checked_duration_since(start).unwrap().as_secs_f64();
         let mut fps = 1.0/frametime;
         println!("FPS : {}", fps);
-        if fps > 40.0 {
-            thread::sleep(Duration::from_secs_f64(1.0/(20.0) - frametime));
+        if fps > 80.0 {
+            thread::sleep(Duration::from_secs_f64(1.0/(70.0) - frametime));
         }
     }
     scheduler.end_threads();

@@ -1,6 +1,6 @@
 use std::{collections::{HashMap, VecDeque}, f32::consts::{PI, SQRT_2}, simd::{num::SimdFloat, Simd}, sync::{Arc, LazyLock}};
 
-use hord3::{defaults::default_rendering::vectorinator_binned::{meshes::{Mesh, MeshID, MeshInstance, MeshLOD, MeshLODS, MeshLODType, MeshTriangles, TrianglePoint}, triangles::{collux_f32_a_u8, collux_one_simd_to_u8_level, collux_u8_a_f32, collux_u8_tuple_to_f32_simd}, Vectorinator, VectorinatorWrite}, horde::{game_engine::{entity::Renderable, multiplayer::Identify, world::{World, WorldEvent}}, geometry::{rotation::{Orientation, Rotation}, vec3d::{Vec3D, Vec3Df}}, rendering::RenderingBackend}, tests::engine_derive_test::TestRB};
+use hord3::{defaults::default_rendering::vectorinator_binned::{Vectorinator, VectorinatorWrite, meshes::{Mesh, MeshID, MeshInstance, MeshLOD, MeshLODS, MeshLODType, MeshTriangles, TrianglePoint}, triangles::{collux_f32_a_u8, collux_one_simd_to_u8_level, collux_u8_a_f32, collux_u8_tuple_to_f32_simd}}, horde::{game_engine::{entity::Renderable, multiplayer::{Identify, MustSync}, world::{World, WorldEvent}}, geometry::{rotation::{Orientation, Rotation}, vec3d::{Vec3D, Vec3Df}}, rendering::RenderingBackend}, tests::engine_derive_test::TestRB};
 use to_from_bytes::{FromBytes, ToBytes};
 use to_from_bytes_derive::{FromBytes, ToBytes};
 use vec_sparse_grid::{SetGrid, SetGridUpdate};
@@ -10,6 +10,7 @@ pub mod light_spreader;
 pub mod raycaster;
 pub mod sparse_grid;
 pub mod vec_sparse_grid;
+pub mod road;
 
 pub const VEC_LENGTH:usize = 4;
 pub const SET_CAPACITY:usize = 16;
@@ -235,6 +236,7 @@ const EMPTY_VOXEL:u8 = 0b00111111;
 #[derive(Clone, ToBytes, FromBytes, PartialEq)]
 pub struct MapChunk<V:Voxel> {
     voxels:Vec<V>,
+    only_1_type:Option<V>,
     origin_worldpos:WorldVoxelPos,
     chunk_coord:WorldChunkPos,
     mesh_id:Option<usize>,
@@ -243,35 +245,45 @@ pub struct MapChunk<V:Voxel> {
 }
 
 #[derive(Clone, ToBytes, FromBytes, PartialEq)]
-pub enum GameMapEvent<V:Voxel> {
+pub enum GameMapEvent<V:Voxel, G:Generator<V>> {
     UpdateVoxelAt(WorldVoxelPos, V),
-    UpdateSetGrid(SetGridUpdate)
+    UpdateSetGrid(SetGridUpdate),
+    NewChunk(WorldChunkPos, MapChunk<V>),
+    UpdateGenerator(G)
 }
 
-impl<ID:Identify, V:Voxel> WorldEvent<GameMap<V>, ID> for GameMapEvent<V> {
+impl<ID:Identify, V:Voxel, G:Generator<V>> WorldEvent<GameMap<V, G>, ID> for GameMapEvent<V, G> {
     fn get_source(&self) -> Option<ID> {
         None
     }
-    fn should_sync(&self) -> bool {
-        true
+    fn should_sync(&self) -> MustSync {
+        match self {
+            Self::NewChunk(_, _) => MustSync::Server,
+            _ => MustSync::Both
+        }
     }
-    fn apply_event(self, world:&mut GameMap<V>) {
+    fn apply_event(self, world:&mut GameMap<V, G>) {
         match self {
             GameMapEvent::UpdateVoxelAt(pos, new_voxel) => {world.get_voxel_at_mut(pos).and_then(|vox| { *vox = new_voxel; None::<()>}); world.modified_this_pos_signal_remesh(pos);},
             GameMapEvent::UpdateSetGrid(set_grid_update) => world.set_grid.apply_update::<VEC_LENGTH, SET_CAPACITY>(set_grid_update),
+            GameMapEvent::NewChunk(chunk_pos, chunk) => {
+                world.chunks.insert(chunk_pos, chunk);
+                world.modified_this_pos_signal_remesh(world.get_chunk_dims_vector().component_product(&chunk_pos));
+            },
+            GameMapEvent::UpdateGenerator(generator) => world.generator = generator
         }
     }
 }
 
-impl<V:Voxel, ID:Identify> World<ID> for GameMap<V> {
+impl<V:Voxel, ID:Identify, G:Generator<V>> World<ID> for GameMap<V, G> {
     type RB = TestRB;
-    type WE = GameMapEvent<V>;
+    type WE = GameMapEvent<V, G>;
     fn update_rendering(&mut self, data:&mut <Self::RB as RenderingBackend>::PreTickData) {
         
     }
 }
 
-impl<'a, V:Voxel> Renderable<VectorinatorWrite<'a>> for GameMap<V> {
+impl<'a, V:Voxel, G:Generator<V>> Renderable<VectorinatorWrite<'a>> for GameMap<V, G> {
     fn do_render_changes(&mut self, render_data:&mut VectorinatorWrite<'a>) {
         if !self.rendering_up_to_date {
             let mut iterator = if self.remesh_fasttrack.len() > 0 {
@@ -427,7 +439,14 @@ impl ChunkDims {
 
 impl<V:Voxel> MapChunk<V> {
     pub fn new(orig_worldpos:WorldVoxelPos, chunk_pos:WorldChunkPos, data:Vec<V>) -> Self {
-        Self { voxels:data, origin_worldpos:orig_worldpos, chunk_coord:chunk_pos, mesh_id: None, mesh_updated: false, mesh_instance: None }
+        let mut only_one = Some(data[0].clone());
+        for voxel in &data {
+            if let Some(v) = only_one.clone() && v.voxel_id() != voxel.voxel_id() {
+                only_one = None;
+                break;
+            } 
+        }
+        Self { voxels:data, origin_worldpos:orig_worldpos, chunk_coord:chunk_pos, mesh_id: None, mesh_updated: false, mesh_instance: None, only_1_type:only_one }
     }
     pub fn get_at_local(&self, pos:WorldVoxelPos, dims:&ChunkDims) -> Option<&V> {
         if pos.in_origin_prism(dims.chunk_length_i, dims.chunk_width_i, dims.chunk_height_i) {
@@ -513,7 +532,7 @@ impl<V:Voxel> MapChunk<V> {
 
 
 #[derive(Clone, ToBytes, FromBytes, PartialEq)]
-pub struct GameMap<V:Voxel> {
+pub struct GameMap<V:Voxel, G:Generator<V>> {
     chunks:HashMap<WorldChunkPos, MapChunk<V>>,
     dims:ChunkDims,
     voxel_types:Vec<V::VT>,
@@ -522,7 +541,8 @@ pub struct GameMap<V:Voxel> {
     forced_rerender:bool,
     min_light_levels:(u8,u8,u8),
     remesh_fasttrack:Vec<WorldChunkPos>,
-    pub set_grid:SetGrid
+    pub set_grid:SetGrid,
+    pub generator:G
 }
 
 pub type WorldChunkPos = Vec3D<i32>;
@@ -551,9 +571,9 @@ fn multiply_corresponding_nonzero(mut scaler:Vec3Df, dir:Vec3Df) -> Vec3Df {
     }
 }
 
-impl<V:Voxel> GameMap<V> {
-    pub fn new(expected_chunks:usize, dims:ChunkDims, voxel_types:Vec<V::VT>, min_light_levels:(u8,u8,u8), mesh_vec:usize) -> Self {
-        Self { chunks: HashMap::with_capacity(expected_chunks), dims, voxel_types, forced_rerender:false, min_light_levels, mesh_vec, rendering_up_to_date: false, remesh_fasttrack:Vec::with_capacity(16), set_grid:SetGrid::new(5.0, Vec3D::all_ones() * -15, Vec3D::all_ones() * 15) }
+impl<V:Voxel, G:Generator<V>> GameMap<V, G> {
+    pub fn new(expected_chunks:usize, dims:ChunkDims, voxel_types:Vec<V::VT>, min_light_levels:(u8,u8,u8), mesh_vec:usize, generator:G) -> Self {
+        Self { chunks: HashMap::with_capacity(expected_chunks), dims, voxel_types, forced_rerender:false, min_light_levels, mesh_vec, rendering_up_to_date: false, remesh_fasttrack:Vec::with_capacity(16), set_grid:SetGrid::new(5.0, Vec3D::all_ones() * -15, Vec3D::all_ones() * 15), generator }
     }
     fn get_lod_without_step(&self, chunk:&MapChunk<V>, around:[Option<&MapChunk<V>> ; 6]) -> MeshLOD {
         let mut x = Vec::with_capacity(600);
@@ -736,124 +756,130 @@ impl<V:Voxel> GameMap<V> {
     }
     
     fn get_lod_with_step(&self, chunk:&MapChunk<V>, around:[Option<&MapChunk<V>> ; 6], step:i32) -> MeshLOD {
-        let mut x = Vec::with_capacity(600);
-        let mut y = Vec::with_capacity(600);
-        let mut z = Vec::with_capacity(600);
-        let mut triangles = MeshTriangles::with_capacity(600);
-        let mut lod = MeshLOD::new(x, y, z, triangles);
-        let scaler = Vec3D::new(step as f32, step as f32, step as f32);
-        let float_step = step as f32;
-        let mut taken_dirs = vec![0 ; self.dims.chunk_height * self.dims.chunk_length * self.dims.chunk_width];
-        println!("Started {} {} {}", chunk.chunk_coord.x, chunk.chunk_coord.y, chunk.chunk_coord.z);
-        for x in (0..self.dims.chunk_length_i).step_by(step as usize) {
-            for y in (0..self.dims.chunk_width_i).step_by(step as usize) {
-                for z in (0..self.dims.chunk_height_i).step_by(step as usize) {
+        if chunk.only_1_type.is_some() {
+            MeshLOD::new(Vec::new(), Vec::new(), Vec::new(), MeshTriangles::with_capacity(0))
+        }
+        else {
+            let mut x = Vec::with_capacity(600);
+            let mut y = Vec::with_capacity(600);
+            let mut z = Vec::with_capacity(600);
+            let mut triangles = MeshTriangles::with_capacity(600);
+            let mut lod = MeshLOD::new(x, y, z, triangles);
+            let scaler = Vec3D::new(step as f32, step as f32, step as f32);
+            let float_step = step as f32;
+            let mut taken_dirs = vec![0 ; self.dims.chunk_height * self.dims.chunk_length * self.dims.chunk_width];
+            println!("Started {} {} {}", chunk.chunk_coord.x, chunk.chunk_coord.y, chunk.chunk_coord.z);
+            for x in (0..self.dims.chunk_length_i).step_by(step as usize) {
+                for y in (0..self.dims.chunk_width_i).step_by(step as usize) {
+                    for z in (0..self.dims.chunk_height_i).step_by(step as usize) {
 
-                    //let voxels = chunk.get_voxels_around(Vec3D::new(x, y, z), around, &self.dims);
-                    //let voxel = chunk.get_at_local(Vec3D::new(x, y, z), &self.dims).unwrap();
-                    for (i, mask) in DIR_MASK.iter().enumerate() {
-                        if taken_dirs[(x as usize + (y as usize * self.dims.chunk_length) + (z as usize * self.dims.chunk_slice_area))] & *mask == *mask {
-                            continue
-                        }
-                        else {
-                            let mut first_dir_greed = 1;
-                            let mut second_dir_greed = 1;
-                            let mut face_data = self.is_area_all_same_in_dir(chunk, around, step, (x,y,z), i, *mask, (first_dir_greed, second_dir_greed), &scaler, &mut taken_dirs);
-
-                            while (first_dir_greed + 1) * step < self.dims.chunk_height_i && (second_dir_greed + 1) * step < self.dims.chunk_height_i && face_data.is_some() {
-                                
-                                //println!("{} {} {}", first_dir_greed, second_dir_greed, step);
-                                let mut first_test_face = self.is_area_all_same_in_dir(chunk, around, step, (x,y,z), i, *mask, (first_dir_greed + 1, second_dir_greed), &scaler, &mut taken_dirs);
-                                if first_test_face.is_some() {
-                                    first_dir_greed += 1;
-                                }
-
-                                let mut second_test_face = self.is_area_all_same_in_dir(chunk, around, step, (x,y,z), i, *mask, (first_dir_greed, second_dir_greed + 1), &scaler, &mut taken_dirs);
-                                if second_test_face.is_some() {
-                                    second_dir_greed += 1;
-                                }
-                                if first_test_face.is_none() && second_test_face.is_none() {
-                                    break;
-                                }
+                        //let voxels = chunk.get_voxels_around(Vec3D::new(x, y, z), around, &self.dims);
+                        //let voxel = chunk.get_at_local(Vec3D::new(x, y, z), &self.dims).unwrap();
+                        for (i, mask) in DIR_MASK.iter().enumerate() {
+                            if taken_dirs[(x as usize + (y as usize * self.dims.chunk_length) + (z as usize * self.dims.chunk_slice_area))] & *mask == *mask {
+                                continue
                             }
-                            match face_data {
-                                Some((full_texture, finished_collux)) => {
-                                    let u_s = first_dir_greed as f32;
-                                    let v_s = second_dir_greed as f32;
-                                    let (mut f_dir, mut s_dir) = PERPENDICULAR[i].clone();
-                                    let scaler = multiply_corresponding_nonzero(multiply_corresponding_nonzero(scaler, Vec3D::new(f_dir.x as f32, f_dir.y as f32, f_dir.z as f32) * u_s), Vec3D::new(s_dir.x as f32, s_dir.y as f32, s_dir.z as f32) * v_s);
+                            else {
+                                let mut first_dir_greed = 1;
+                                let mut second_dir_greed = 1;
+                                let mut face_data = self.is_area_all_same_in_dir(chunk, around, step, (x,y,z), i, *mask, (first_dir_greed, second_dir_greed), &scaler, &mut taken_dirs);
 
-                                    let start_index = lod.x.len();
-                                    let indices = TRIS_INDICES_UVS.1;
-                                    let uvs = TRIS_INDICES_UVS.2;
-                                    let mut points = TRIS_INDICES_UVS.0[i];
-                                    points = points * scaler + (Vec3D::new(x as f32, y as f32, z as f32)) + ((Vec3Df::all_ones() * 0.5).component_product(&scaler) - Vec3Df::all_ones() * 0.5);
-                                    lod.add_points(&points);
-                                    lod.triangles.add_triangle(
-                                        TrianglePoint::new(
-                                            indices[0] + start_index,
-                                            uvs[indices[0]].0 * float_step * u_s,
-                                            uvs[indices[0]].1 * float_step * v_s,
-                                            finished_collux.0,
-                                            finished_collux.1,
-                                            finished_collux.2
-                                        ),
-                                        TrianglePoint::new(
-                                            indices[1] + start_index,
-                                            uvs[indices[1]].0 * float_step * u_s,
-                                            uvs[indices[1]].1 * float_step * v_s,
-                                            finished_collux.0,
-                                            finished_collux.1,
-                                            finished_collux.2
-                                        ),
-                                        TrianglePoint::new(
-                                            indices[2] + start_index,
-                                            uvs[indices[2]].0 * float_step * u_s,
-                                            uvs[indices[2]].1 * float_step * v_s,
-                                            finished_collux.0,
-                                            finished_collux.1,
-                                            finished_collux.2
-                                        ),
-                                        full_texture, 
-                                        0
-                                    );
-                                    lod.triangles.add_triangle(
-                                        TrianglePoint::new(
-                                            indices[3] + start_index,
-                                            uvs[indices[3]].0 * float_step * u_s,
-                                            uvs[indices[3]].1 * float_step * v_s,
-                                            finished_collux.0,
-                                            finished_collux.1,
-                                            finished_collux.2
-                                        ),
-                                        TrianglePoint::new(
-                                            indices[4] + start_index,
-                                            uvs[indices[4]].0 * float_step * u_s,
-                                            uvs[indices[4]].1 * float_step * v_s,
-                                            finished_collux.0,
-                                            finished_collux.1,
-                                            finished_collux.2
-                                        ),
-                                        TrianglePoint::new(
-                                            indices[5] + start_index,
-                                            uvs[indices[5]].0 * float_step * u_s,
-                                            uvs[indices[5]].1 * float_step * v_s,
-                                            finished_collux.0,
-                                            finished_collux.1,
-                                            finished_collux.2
-                                        ),
-                                        full_texture, 
-                                        0
-                                    );
-                                },
-                                None => ()
+                                while (first_dir_greed + 1) * step < self.dims.chunk_height_i && (second_dir_greed + 1) * step < self.dims.chunk_height_i && face_data.is_some() {
+                                    
+                                    //println!("{} {} {}", first_dir_greed, second_dir_greed, step);
+                                    let mut first_test_face = self.is_area_all_same_in_dir(chunk, around, step, (x,y,z), i, *mask, (first_dir_greed + 1, second_dir_greed), &scaler, &mut taken_dirs);
+                                    if first_test_face.is_some() {
+                                        first_dir_greed += 1;
+                                    }
+
+                                    let mut second_test_face = self.is_area_all_same_in_dir(chunk, around, step, (x,y,z), i, *mask, (first_dir_greed, second_dir_greed + 1), &scaler, &mut taken_dirs);
+                                    if second_test_face.is_some() {
+                                        second_dir_greed += 1;
+                                    }
+                                    if first_test_face.is_none() && second_test_face.is_none() {
+                                        break;
+                                    }
+                                }
+                                match face_data {
+                                    Some((full_texture, finished_collux)) => {
+                                        let u_s = first_dir_greed as f32;
+                                        let v_s = second_dir_greed as f32;
+                                        let (mut f_dir, mut s_dir) = PERPENDICULAR[i].clone();
+                                        let scaler = multiply_corresponding_nonzero(multiply_corresponding_nonzero(scaler, Vec3D::new(f_dir.x as f32, f_dir.y as f32, f_dir.z as f32) * u_s), Vec3D::new(s_dir.x as f32, s_dir.y as f32, s_dir.z as f32) * v_s);
+
+                                        let start_index = lod.x.len();
+                                        let indices = TRIS_INDICES_UVS.1;
+                                        let uvs = TRIS_INDICES_UVS.2;
+                                        let mut points = TRIS_INDICES_UVS.0[i];
+                                        points = points * scaler + (Vec3D::new(x as f32, y as f32, z as f32)) + ((Vec3Df::all_ones() * 0.5).component_product(&scaler) - Vec3Df::all_ones() * 0.5);
+                                        lod.add_points(&points);
+                                        lod.triangles.add_triangle(
+                                            TrianglePoint::new(
+                                                indices[0] + start_index,
+                                                uvs[indices[0]].0 * float_step * u_s,
+                                                uvs[indices[0]].1 * float_step * v_s,
+                                                finished_collux.0,
+                                                finished_collux.1,
+                                                finished_collux.2
+                                            ),
+                                            TrianglePoint::new(
+                                                indices[1] + start_index,
+                                                uvs[indices[1]].0 * float_step * u_s,
+                                                uvs[indices[1]].1 * float_step * v_s,
+                                                finished_collux.0,
+                                                finished_collux.1,
+                                                finished_collux.2
+                                            ),
+                                            TrianglePoint::new(
+                                                indices[2] + start_index,
+                                                uvs[indices[2]].0 * float_step * u_s,
+                                                uvs[indices[2]].1 * float_step * v_s,
+                                                finished_collux.0,
+                                                finished_collux.1,
+                                                finished_collux.2
+                                            ),
+                                            full_texture, 
+                                            0
+                                        );
+                                        lod.triangles.add_triangle(
+                                            TrianglePoint::new(
+                                                indices[3] + start_index,
+                                                uvs[indices[3]].0 * float_step * u_s,
+                                                uvs[indices[3]].1 * float_step * v_s,
+                                                finished_collux.0,
+                                                finished_collux.1,
+                                                finished_collux.2
+                                            ),
+                                            TrianglePoint::new(
+                                                indices[4] + start_index,
+                                                uvs[indices[4]].0 * float_step * u_s,
+                                                uvs[indices[4]].1 * float_step * v_s,
+                                                finished_collux.0,
+                                                finished_collux.1,
+                                                finished_collux.2
+                                            ),
+                                            TrianglePoint::new(
+                                                indices[5] + start_index,
+                                                uvs[indices[5]].0 * float_step * u_s,
+                                                uvs[indices[5]].1 * float_step * v_s,
+                                                finished_collux.0,
+                                                finished_collux.1,
+                                                finished_collux.2
+                                            ),
+                                            full_texture, 
+                                            0
+                                        );
+                                    },
+                                    None => ()
+                                }
                             }
                         }
                     }
                 }
             }
+            lod
         }
-        lod
+        
     }
     pub fn does_chunk_exist(&self, chunk:WorldChunkPos) -> bool {
         self.chunks.contains_key(&chunk)
@@ -1008,3 +1034,6 @@ pub fn get_f64_pos(pos:WorldVoxelPos) -> Vec3D<f64> {
     )
 }
 
+pub trait Generator<V:Voxel>: Clone + ToBytes + FromBytes + PartialEq {
+    fn generate(&self, pos:WorldVoxelPos) -> V;
+}

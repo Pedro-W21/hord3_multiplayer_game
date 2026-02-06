@@ -1,33 +1,33 @@
 
 use std::{collections::HashMap, f32::consts::PI, net::Ipv4Addr, path::PathBuf, simd::Simd, sync::{atomic::{AtomicUsize, Ordering}, mpmc::{self, channel}, Arc, RwLock}, thread, time::{Duration, Instant}};
 
-use crate::{game_entity::colliders::AABB, server::server_tasks::GameUserEvent};
+use crate::{driver::{colliders::AABB, stats::{StaticStats, Stats}}, game_map::road::Road, server::server_tasks::GameUserEvent, vehicle::{NewVehicleEntity, VehicleEntityVec, default_vehicles::default_car::get_default_car_type, position::VehiclePosition, vehicle_stats::VehicleStats}};
 use cosmic_text::{Color, Font, Metrics};
 use crate::cutscene::{camera_movement::{CameraMovement, CameraMovementDuration, CameraMovementElement, CameraSequence}, demo_cutscene::{get_demo_cutscene, get_empty_cutscene}, game_shader::GameShader, real_demo_cutscene::get_real_demo_cutscene, write_in_the_air::get_positions_of_air_written_text, written_texture::get_written_texture_buffer};
 use crate::day_night::DayNight;
 use crate::game_3d_models::{clustered_ent_mesh, grey_sphere_mesh, lit_selection_cube, second_spread_out_ent_mesh, simple_line, sphere_mesh, spread_out_ent_mesh, textured_sphere_mesh, wireframe_sphere_mesh, xyz_mesh};
 use crate::game_engine::{CoolGameEngineBase, CoolVoxel, CoolVoxelType, ExtraData};
-use crate::game_entity::{Collider, GameEntityVec, Movement, NewGameEntity, StaticCollider, StaticGameEntity, StaticMeshInfo, StaticMovement, StaticStats, Stats};
+use crate::driver::{Collider, GameEntityVec, Movement, NewGameEntity, StaticCollider, StaticGameEntity, StaticMeshInfo, StaticMovement};
 use crate::game_input_handler::GameInputHandler;
 use crate::game_map::{get_f64_pos, get_float_pos, light_spreader::{LightPos, LightSpread}, ChunkDims, GameMap, VoxelLight};
 use crate::gui_elements::{list_choice::get_list_choice, number_config::get_number_config};
-use hord3::{defaults::{default_frontends::minifb_frontend::MiniFBWindow, default_rendering::vectorinator_binned::{meshes::{Mesh, MeshID, MeshLODS, MeshLODType}, rendering_spaces::ViewportData, shaders::NoOpShader, textures::{argb_to_rgb, rgb_to_argb, TextureSetID}, triangles::{color_u32_to_u8_simd, simd_rgb_to_argb}, Vectorinator}, default_ui::simple_ui::{SimpleUI, UIDimensions, UIElement, UIElementBackground, UIElementContent, UIElementID, UIEvent, UIUnit, UIUserAction, UIVector}}, horde::{frontend::{HordeWindowDimensions, WindowingHandler}, game_engine::{entity::Renderable, multiplayer::HordeMultiModeChoice, world::{WorldComputeHandler, WorldHandler}}, geometry::{plane::EquationPlane, rotation::{Orientation, Rotation}, vec3d::{Vec3D, Vec3Df}}, rendering::{camera::Camera, framebuffer::HordeColorFormat}, scheduler::{HordeScheduler, HordeTaskQueue, HordeTaskSequence, SequencedTask}, sound::{SoundRequest, WaveIdentification, WavePosition, WaveRequest, WaveSink, Waves}}};
+use hord3::{defaults::{default_frontends::minifb_frontend::MiniFBWindow, default_rendering::vectorinator_binned::{Vectorinator, meshes::{Mesh, MeshID, MeshLODS, MeshLODType}, rendering_spaces::ViewportData, shaders::NoOpShader, textures::{TextureSetID, argb_to_rgb, rgb_to_argb}, triangles::{color_u32_to_u8_simd, simd_rgb_to_argb}}, default_ui::simple_ui::{SimpleUI, UIDimensions, UIElement, UIElementBackground, UIElementContent, UIElementID, UIEvent, UIUnit, UIUserAction, UIVector}}, horde::{frontend::{HordeWindowDimensions, WindowingHandler}, game_engine::{entity::Renderable, multiplayer::{HordeMultiModeChoice, MustSync}, world::{WorldComputeHandler, WorldHandler}}, geometry::{plane::EquationPlane, rotation::{Orientation, Rotation}, vec3d::{Vec3D, Vec3Df}}, rendering::{camera::Camera, framebuffer::HordeColorFormat}, scheduler::{HordeScheduler, HordeTaskQueue, HordeTaskSequence, SequencedTask}, sound::{SoundRequest, WaveIdentification, WavePosition, WaveRequest, WaveSink, Waves}}};
 use noise::{NoiseFn, Perlin, Seedable};
 use crate::tile_editor::{get_tile_voxels, TileEditorData};
 use server_tasks::{ServerTask, ServerTaskTaskHandler};
 
-use crate::{game_entity::{actions::{Action, ActionKind, ActionSource, ActionTimer, ActionsEvent, ActionsUpdate, StaticGameActions}, director::{llm_director::LLMDirector, Director, DirectorKind, StaticDirector}, planner::StaticPlanner, GameEntityEvent}, game_map::get_voxel_pos, proxima_link::ProximaLink};
+use crate::{driver::{actions::{Action, ActionKind, ActionSource, ActionTimer, ActionsEvent, ActionsUpdate, StaticGameActions}, director::{llm_director::LLMDirector, Director, DirectorKind, StaticDirector}, planner::StaticPlanner, GameEntityEvent}, game_map::get_voxel_pos, proxima_link::ProximaLink};
 
 pub mod server_tasks;
 
 pub fn server_func() {
     const TICKRATE:usize = 30;
-    let mut world = GameMap::new(100, ChunkDims::new(8, 8, 8), get_tile_voxels(), (255,255,255), 1);
+    let mut world = GameMap::new(100, ChunkDims::new(8, 8, 8), get_tile_voxels(), (255,255,255), 1, Road::new(Vec3D::zero(), Vec3Df::new(1.0, 0.0, 0.0)));
     let mut perlin = Perlin::new().set_seed(13095);
     let mut world_height = 15.0;
     let mut water_level = 10.0;
-    let start = Vec3D::new(-20, -30, -2);
-    let end = Vec3D::new(20, 30, 10);
+    let start = Vec3D::new(-15, -15, -2);
+    let end = Vec3D::new(15, 15, 5);
 
     let mut ground_at = vec![0; ((end.x - start.x) * 8 * (end.y - start.y) * 8) as usize];
     let length_f64 = ((end.x - start.x) * 8 ) as f64;
@@ -36,7 +36,7 @@ pub fn server_func() {
         let value_2D = (perlin.get([pos_3D.x, pos_3D.y]) + 1.0) * 0.5;
         let local_world_height = world_height - (((pos.x - start.x) * 8) as f64/length_f64) * world_height;
         let actual_height = local_world_height + world_height * value_2D * 2.0;
-        if (pos.z as f64) < actual_height || (pos.z as f64) < water_level {
+        if /*(pos.z as f64) < actual_height ||*/ (pos.z as f64) < water_level {
             let ground_pos = (pos.x - (start.x * 8) + (pos.y - (start.y * 8)) * ((end.y - start.y) * 8)) as usize;
             if (pos.z as f64) < water_level {
                 if let Some(val) =  ground_at.get(ground_pos) && *val < pos.z {
@@ -111,8 +111,8 @@ pub fn server_func() {
         ];
 
         for i in 0..1 {
-            let pos = Vec3D::new((fastrand::f32() - 0.5) * 2.0 * 150.0, (fastrand::f32() - 0.5) * 2.0 * 150.0, 150.0);
-            writer.new_ent(NewGameEntity::new(Movement{against_wall:false, touching_ground:false,pos:pos, speed:Vec3D::zero(), orient:Orientation::zero(), rotat:Rotation::from_orientation(Orientation::zero())}, Stats {static_type_id:1, health:0, damage:0, stamina:0, ground_speed:0.2, jump_height:1.0}, Collider{team:0, collider:AABB::new(pos - Vec3D::all_ones() * 0.5, pos + Vec3D::all_ones() * 0.5)}, Director::new_with_random_name(DirectorKind::LLM(LLMDirector::new_with_goals(fastrand::choice(test_goals.iter()).unwrap().clone()))), true, None));
+            let pos = Vec3D::new((fastrand::f32() - 0.5) * 2.0 * 50.0, (fastrand::f32() - 0.5) * 2.0 * 50.0, 30.0);
+            writer.new_ent(NewGameEntity::new(Movement{against_wall:false, touching_ground:false,pos:pos, speed:Vec3D::zero(), orient:Orientation::zero(), rotat:Rotation::from_orientation(Orientation::zero())}, Stats {static_type_id:1, health:0, damage:0, stamina:0, ground_speed:0.2, jump_height:1.0, personal_vehicle:Some(0)}, Collider{team:0, collider:AABB::new(pos - Vec3D::all_ones() * 0.5, pos + Vec3D::all_ones() * 0.5)}, Director::new_with_random_name(DirectorKind::LLM(LLMDirector::new_with_goals(fastrand::choice(test_goals.iter()).unwrap().clone()))), MustSync::Server, None));
             //writer.new_ent(NewGameEntity::new(Movement{against_wall:false, touching_ground:false,pos:pos, speed:Vec3D::zero(), orient:Orientation::zero(), rotat:Rotation::from_orientation(Orientation::zero())}, Stats {static_type_id:1, health:0, damage:0, stamina:0, ground_speed:0.2, jump_height:1.0}, Collider{team:0, collider:AABB::new(pos - Vec3D::all_ones() * 0.5, pos + Vec3D::all_ones() * 0.5)}, Director::new_with_random_name(DirectorKind::LLM(LLMDirector::new_with_goals(test_goals[i].clone())))));
         }
 
@@ -127,8 +127,13 @@ pub fn server_func() {
         Err(_) => (mpmc::channel().0, mpmc::channel().1)
     };
     
-    let entity_vec_2 = GameEntityVec::new(1000);
-    
+    let mut entity_vec_2 = VehicleEntityVec::new(1000);
+    {
+        let mut writer = entity_vec_2.get_write();
+        writer.new_sct(get_default_car_type());
+
+        writer.new_ent(NewVehicleEntity::new(VehiclePosition::new().with_pos(Vec3Df::new(0.0, 0.0, 35.0)), VehicleStats {static_id:0, nitro_left:100.0, mass:10.0},  MustSync::Server, None));
+    }
     let windowing = WindowingHandler::new::<MiniFBWindow>(HordeWindowDimensions::new(1280, 720), HordeColorFormat::ARGB8888);
     let framebuf = windowing.get_outside_framebuf();
     let mut shader = Arc::new(GameShader::new_default());
@@ -338,7 +343,7 @@ pub fn server_func() {
         //prev_night_status = new_night_state;
         let new_camera = {
 
-            if i > 400 {
+            /* if i > 400 {
                 let mut reader = engine.entity_1.get_read();
 
                 let ent = fastrand::usize(0..reader.actions.len());
@@ -349,13 +354,13 @@ pub fn server_func() {
                 let next_action = counter.get_next_id();
                 reader.tunnels.actions_out.send(GameEntityEvent::new(true,ActionsEvent::new(ent, None, ActionsUpdate::AddAction(Action::new(next_action, engine.extra_data.tick.load(Ordering::Relaxed), ActionTimer::Delay(500), ActionKind::PathToPosition(Vec3Df::new(target_pos.x as f32, target_pos.y as f32, target_pos.z as f32), 0.7), ActionSource::Director)))));
                 reader.tunnels.actions_out.send(GameEntityEvent::new(true,ActionsEvent::new(ent, None, ActionsUpdate::UpdateCounter(counter))));
-            }
+            }*/
             engine.extra_data.tick.fetch_add(1, Ordering::Relaxed);
             0
         };
         {
             let first_ent = engine.entity_1.get_read();
-            let second_ent = engine.entity_2.get_read();
+            let second_ent = engine.vehicles.get_read();
             let world = WorldComputeHandler::from_world_handler(&engine.world);
             loop {
                 match response_receiver.try_recv() {

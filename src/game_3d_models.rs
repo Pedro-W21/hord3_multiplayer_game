@@ -1,6 +1,6 @@
 use std::{collections::HashSet, f32::consts::PI, sync::Arc};
 
-use hord3::{defaults::default_rendering::{vectorinator_binned::{meshes::{Mesh, MeshLOD, MeshLODS, MeshLODType, MeshTriangles}, shapes_to_tris::{cylinder_to_render_comp, vec_to_complex}, textures::rgb_to_argb}}, horde::geometry::{rotation::Rotation, shapes_3d::{Cylinder, Sphere, Square}, vec3d::{Vec3D, Vec3Df}}};
+use hord3::{defaults::default_rendering::vectorinator_binned::{meshes::{Mesh, MeshLOD, MeshLODS, MeshLODType, MeshTriangles}, shapes_to_tris::{cylinder_to_render_comp, vec_to_complex, vec_to_complex_rand}, textures::rgb_to_argb}, horde::geometry::{rotation::Rotation, shapes_3d::{Cylinder, FixedRegularFace, Quad, Sphere, Square}, vec3d::{Vec3D, Vec3Df}}};
 
 pub fn line_3D_from_to(start:Vec3Df, stop:Vec3Df, texture:u32, side:f32, field:u32, light:(u8,u8,u8)) -> MeshLOD {
     let (yaw, pitch) = start.get_orient_vers(&stop);
@@ -13,6 +13,18 @@ pub fn simple_line(start:Vec3Df, stop:Vec3Df, texture:u32, light:(u8,u8,u8)) -> 
         start,
         stop,
         texture, side, 0, light);
+    mesh
+}
+
+pub fn simple_prism(start:Vec3Df, stop:Vec3Df, texture:u32, light:(u8,u8,u8)) -> MeshLOD {
+    let base = Quad::new([
+        start,
+        Vec3Df::new(stop.x, start.y, start.z),
+        Vec3Df::new(stop.x, stop.y, start.z),
+        Vec3Df::new(start.x, stop.y, start.z),
+    ]);
+    let height = (stop.z - start.z).abs();
+    let mut mesh = vec_to_complex_rand(&Cylinder::<4>::new(FixedRegularFace::from_points(base.get_points()), height).get_triangles(false).get_all_tris_raw(), (texture, texture), 0);
     mesh
 }
 

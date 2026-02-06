@@ -55,10 +55,10 @@ pub fn execute_entity_sequence(sequences:&mut Vec<EntitySequence<CoolGameEngineT
                         writer.movement[id].orient = entity_desc.orient;
                         writer.movement[id].pos = entity_desc.pos;
                     },
-                    CoolGameEngineTID::entity_2(id) => {
-                        let mut writer = engine.entity_2.get_write();
-                        writer.movement[id].orient = entity_desc.orient;
-                        writer.movement[id].pos = entity_desc.pos;
+                    CoolGameEngineTID::vehicles(id) => {
+                        let mut writer = engine.vehicles.get_write();
+                        writer.position[id].orientation = entity_desc.orient;
+                        writer.position[id].pos = entity_desc.pos;
                     },
                     CoolGameEngineTID::world => {}
                 }

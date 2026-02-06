@@ -1,11 +1,11 @@
 use std::{collections::{HashMap, HashSet}, sync::LazyLock};
 
-use hord3::horde::{game_engine::world::WorldComputeHandler, geometry::vec3d::Vec3D};
+use hord3::horde::{game_engine::{multiplayer::MustSync, world::WorldComputeHandler}, geometry::vec3d::Vec3D};
 use html_parser::{Dom, Node};
 use proxima_backend::{ai_interaction::endpoint_api::EndpointRequestVariant, database::{chats::SessionType, configuration::{ChatConfiguration, ChatSetting}, context::{ContextData, ContextPart, ContextPosition, WholeContext}}};
 use to_from_bytes_derive::{FromBytes, ToBytes};
 
-use crate::{game_engine::{CoolGameEngineTID, CoolVoxel}, game_entity::{actions::{Action, ActionCounter, ActionKind, ActionSource, ActionTimer, ActionsEvent, ActionsUpdate}, director::{DirectorAlert, DirectorEvent}, GameEntityEvent, GameEntityVecRead}, game_map::{get_voxel_pos, GameMap, Voxel, VoxelLight, WorldVoxelPos}, proxima_link::{HordeProximaAIRequest, HordeProximaAIResponse}};
+use crate::{driver::{GameEntityEvent, GameEntityVecRead, actions::{Action, ActionCounter, ActionKind, ActionSource, ActionTimer, ActionsEvent, ActionsUpdate}, director::{DirectorAlert, DirectorEvent}}, game_engine::{CoolGameEngineTID, CoolVoxel}, game_map::{GameMap, Voxel, VoxelLight, WorldVoxelPos, get_voxel_pos, road::Road}, proxima_link::{HordeProximaAIRequest, HordeProximaAIResponse}, vehicle::VehicleEntityVecRead};
 
 static PATHING_POSITIONS:LazyLock<Vec<Vec3D<i32>>> = LazyLock::new(|| {
     vec![
@@ -56,8 +56,8 @@ pub fn get_world_slice_string<'a>(
     to:WorldVoxelPos, 
     agent_id:usize,
     first_ent:&GameEntityVecRead<'a, CoolGameEngineTID>,
-    second_ent:&GameEntityVecRead<'a, CoolGameEngineTID>,
-    world:&WorldComputeHandler<GameMap<CoolVoxel>, CoolGameEngineTID>
+    second_ent:&VehicleEntityVecRead<'a, CoolGameEngineTID>,
+    world:&WorldComputeHandler<GameMap<CoolVoxel, Road>, CoolGameEngineTID>
 ) -> String {
     let mut final_string = String::new();
     let z = from.z;
@@ -159,8 +159,8 @@ impl LLMDirector {
         &mut self,
         agent_id:usize,
         first_ent:&GameEntityVecRead<'a, CoolGameEngineTID>,
-        second_ent:&GameEntityVecRead<'a, CoolGameEngineTID>,
-        world:&WorldComputeHandler<GameMap<CoolVoxel>, CoolGameEngineTID>,
+        second_ent:&VehicleEntityVecRead<'a, CoolGameEngineTID>,
+        world:&WorldComputeHandler<GameMap<CoolVoxel, Road>, CoolGameEngineTID>,
         tick:usize,
     ) -> Option<HordeProximaAIRequest> {
         if tick - self.last_prompt_tick > 1000 && self.in_flight_prompts.len() == 0 {
@@ -175,8 +175,8 @@ impl LLMDirector {
         agent_id:usize,
         reasons:Vec<DirectorAlert>,
         first_ent:&GameEntityVecRead<'a, CoolGameEngineTID>,
-        second_ent:&GameEntityVecRead<'a, CoolGameEngineTID>,
-        world:&WorldComputeHandler<GameMap<CoolVoxel>, CoolGameEngineTID>,
+        second_ent:&VehicleEntityVecRead<'a, CoolGameEngineTID>,
+        world:&WorldComputeHandler<GameMap<CoolVoxel, Road>, CoolGameEngineTID>,
         tick:usize,
     ) -> HordeProximaAIRequest {
         const SIGHT_RANGE:i32 = 4;
@@ -275,8 +275,8 @@ impl LLMDirector {
         &mut self,
         agent_id:usize,
         first_ent:&GameEntityVecRead<'a, CoolGameEngineTID>,
-        second_ent:&GameEntityVecRead<'a, CoolGameEngineTID>,
-        world:&WorldComputeHandler<GameMap<CoolVoxel>, CoolGameEngineTID>,
+        second_ent:&VehicleEntityVecRead<'a, CoolGameEngineTID>,
+        world:&WorldComputeHandler<GameMap<CoolVoxel, Road>, CoolGameEngineTID>,
         tick:usize,
         counter:&mut ActionCounter,
     ) {
@@ -290,8 +290,8 @@ impl LLMDirector {
         response:HordeProximaAIResponse,
         agent_id:usize,
         first_ent:&GameEntityVecRead<'a, CoolGameEngineTID>,
-        second_ent:&GameEntityVecRead<'a, CoolGameEngineTID>,
-        world:&WorldComputeHandler<GameMap<CoolVoxel>, CoolGameEngineTID>,
+        second_ent:&VehicleEntityVecRead<'a, CoolGameEngineTID>,
+        world:&WorldComputeHandler<GameMap<CoolVoxel, Road>, CoolGameEngineTID>,
         tick:usize,
         counter:&mut ActionCounter,
     ) {
@@ -329,8 +329,8 @@ impl LLMDirector {
         commands:String,
         agent_id:usize,
         first_ent:&GameEntityVecRead<'a, CoolGameEngineTID>,
-        second_ent:&GameEntityVecRead<'a, CoolGameEngineTID>,
-        world:&WorldComputeHandler<GameMap<CoolVoxel>, CoolGameEngineTID>,
+        second_ent:&VehicleEntityVecRead<'a, CoolGameEngineTID>,
+        world:&WorldComputeHandler<GameMap<CoolVoxel, Road>, CoolGameEngineTID>,
         tick:usize,
         counter:&mut ActionCounter,
     ) {
@@ -360,7 +360,7 @@ impl LLMDirector {
                                 }
                             }
                             match closest {
-                                Some((id, dist)) => {first_ent.tunnels.director_out.send(GameEntityEvent::new(true,DirectorEvent::new(id, Some(CoolGameEngineTID::entity_1(agent_id)), super::DirectorUpdate::SendAlert(DirectorAlert::HeardWords(agent_id, text)))));},
+                                Some((id, dist)) => {first_ent.tunnels.director_out.send(GameEntityEvent::new(MustSync::Server,DirectorEvent::new(id, Some(CoolGameEngineTID::entity_1(agent_id)), super::DirectorUpdate::SendAlert(DirectorAlert::HeardWords(agent_id, text)))));},
                                 None => ()
                             }
                         },
@@ -372,7 +372,7 @@ impl LLMDirector {
                                 if i != agent_id {
                                     let dist = agent_pos.dist(&first_ent.movement[i].pos);
                                     if dist < 10.0 {
-                                        first_ent.tunnels.director_out.send(GameEntityEvent::new(true,DirectorEvent::new(i, Some(CoolGameEngineTID::entity_1(agent_id)), super::DirectorUpdate::SendAlert(DirectorAlert::HeardWords(agent_id, text.clone())))));
+                                        first_ent.tunnels.director_out.send(GameEntityEvent::new(MustSync::Server,DirectorEvent::new(i, Some(CoolGameEngineTID::entity_1(agent_id)), super::DirectorUpdate::SendAlert(DirectorAlert::HeardWords(agent_id, text.clone())))));
                                         total_count += 1;
                                     }
                                 }
@@ -389,7 +389,7 @@ impl LLMDirector {
                             let mut total_count = 0;
                             for i in 0..first_ent.director.len() {
                                 if i != agent_id {
-                                    first_ent.tunnels.director_out.send(GameEntityEvent::new(true,DirectorEvent::new(i, Some(CoolGameEngineTID::entity_1(agent_id)), super::DirectorUpdate::SendAlert(DirectorAlert::HeardWords(agent_id, text.clone())))));
+                                    first_ent.tunnels.director_out.send(GameEntityEvent::new(MustSync::Server,DirectorEvent::new(i, Some(CoolGameEngineTID::entity_1(agent_id)), super::DirectorUpdate::SendAlert(DirectorAlert::HeardWords(agent_id, text.clone())))));
                                     total_count += 1;
                                 }
                             }
@@ -411,7 +411,7 @@ impl LLMDirector {
                                     }
                                 }
                             }
-                            first_ent.tunnels.actions_out.send(GameEntityEvent::new(true,ActionsEvent::new(agent_id, None, ActionsUpdate::AddAction(Action::new(id, tick, ActionTimer::Delay(15000), ActionKind::PathToPosition(Vec3D::new(final_position.x as f32, final_position.y as f32, final_position.z as f32), 0.8), ActionSource::Director)))));
+                            first_ent.tunnels.actions_out.send(GameEntityEvent::new(MustSync::Server,ActionsEvent::new(agent_id, None, ActionsUpdate::AddAction(Action::new(id, tick, ActionTimer::Delay(15000), ActionKind::PathToPosition(Vec3D::new(final_position.x as f32, final_position.y as f32, final_position.z as f32), 0.8), ActionSource::Director)))));
                         }
                     },
                     "GOAL" => match words[1] {
@@ -450,11 +450,11 @@ impl LLMDirector {
                         match words[1] {
                             "place" => if let Ok(x) = words[2].parse::<i32>() && let Ok(y) = words[3].parse::<i32>() && let Ok(z) = words[4].parse::<i32>() {
                                 let id = counter.get_next_id();
-                                first_ent.tunnels.actions_out.send(GameEntityEvent::new(true,ActionsEvent::new(agent_id, None, ActionsUpdate::AddAction(Action::new(id, tick, ActionTimer::Delay(500), ActionKind::ChangeVoxel(Vec3D::new(x, y, z), CoolVoxel::new(9, 0, VoxelLight::max_light(), None)), ActionSource::Director)))));
+                                first_ent.tunnels.actions_out.send(GameEntityEvent::new(MustSync::Server,ActionsEvent::new(agent_id, None, ActionsUpdate::AddAction(Action::new(id, tick, ActionTimer::Delay(500), ActionKind::ChangeVoxel(Vec3D::new(x, y, z), CoolVoxel::new(9, 0, VoxelLight::max_light(), None)), ActionSource::Director)))));
                             },
                             "destroy" => if let Ok(x) = words[2].parse::<i32>() && let Ok(y) = words[3].parse::<i32>() && let Ok(z) = words[4].parse::<i32>() {
                                 let id = counter.get_next_id();
-                                first_ent.tunnels.actions_out.send(GameEntityEvent::new(true,ActionsEvent::new(agent_id, None, ActionsUpdate::AddAction(Action::new(id, tick, ActionTimer::Delay(500), ActionKind::ChangeVoxel(Vec3D::new(x, y, z), CoolVoxel::new(0, 0, VoxelLight::max_light(), None)), ActionSource::Director)))));
+                                first_ent.tunnels.actions_out.send(GameEntityEvent::new(MustSync::Server,ActionsEvent::new(agent_id, None, ActionsUpdate::AddAction(Action::new(id, tick, ActionTimer::Delay(500), ActionKind::ChangeVoxel(Vec3D::new(x, y, z), CoolVoxel::new(0, 0, VoxelLight::max_light(), None)), ActionSource::Director)))));
                             },
                             _ => ()
                         }
@@ -468,7 +468,7 @@ impl LLMDirector {
                                     for y in y1..y2 {
                                         for z in z1..z2 {
                                             let id = counter.get_next_id();
-                                            first_ent.tunnels.actions_out.send(GameEntityEvent::new(true,ActionsEvent::new(agent_id, None, ActionsUpdate::AddAction(Action::new(id, tick, delay.clone(), ActionKind::ChangeVoxel(Vec3D::new(x, y, z), CoolVoxel::new(9, 0, VoxelLight::max_light(), None)), ActionSource::Director)))));
+                                            first_ent.tunnels.actions_out.send(GameEntityEvent::new(MustSync::Server,ActionsEvent::new(agent_id, None, ActionsUpdate::AddAction(Action::new(id, tick, delay.clone(), ActionKind::ChangeVoxel(Vec3D::new(x, y, z), CoolVoxel::new(9, 0, VoxelLight::max_light(), None)), ActionSource::Director)))));
                                         }
                                     }
                                 }
@@ -480,7 +480,7 @@ impl LLMDirector {
                                     for y in y1..y2 {
                                         for z in z1..z2 {
                                             let id = counter.get_next_id();
-                                            first_ent.tunnels.actions_out.send(GameEntityEvent::new(true,ActionsEvent::new(agent_id, None, ActionsUpdate::AddAction(Action::new(id, tick, delay.clone(), ActionKind::ChangeVoxel(Vec3D::new(x, y, z), CoolVoxel::new(0, 0, VoxelLight::max_light(), None)), ActionSource::Director)))));
+                                            first_ent.tunnels.actions_out.send(GameEntityEvent::new(MustSync::Server,ActionsEvent::new(agent_id, None, ActionsUpdate::AddAction(Action::new(id, tick, delay.clone(), ActionKind::ChangeVoxel(Vec3D::new(x, y, z), CoolVoxel::new(0, 0, VoxelLight::max_light(), None)), ActionSource::Director)))));
                                         }
                                     }
                                 }

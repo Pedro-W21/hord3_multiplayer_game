@@ -1,11 +1,11 @@
 use std::{process, sync::{mpmc::{self, Receiver, Sender}, mpsc::RecvTimeoutError}, thread::{self, JoinHandle}, time::Duration};
 
-use hord3::horde::game_engine::world::WorldComputeHandler;
+use hord3::horde::game_engine::{multiplayer::MustSync, world::WorldComputeHandler};
 use proxima_backend::{ai_interaction::endpoint_api::{EndpointRequestVariant, EndpointResponseVariant}, web_payloads::{AIPayload, AIResponse, AuthPayload, AuthResponse}};
 use serde::de::DeserializeOwned;
 use to_from_bytes_derive::{FromBytes, ToBytes};
 
-use crate::{game_engine::{CoolGameEngineTID, CoolVoxel}, game_entity::{director::{DirectorEvent, DirectorUpdate}, GameEntityEvent, GameEntityVecRead}, game_map::GameMap};
+use crate::{driver::{GameEntityEvent, GameEntityVecRead, director::{DirectorEvent, DirectorUpdate}}, game_engine::{CoolGameEngineTID, CoolVoxel}, game_map::{GameMap, road::Road}, vehicle::VehicleEntityVecRead};
 
 pub struct ProximaLink {
     auth_key:String,
@@ -124,15 +124,15 @@ impl HordeProximaAIResponse {
     pub fn apply<'a>(
         self,
         first_ent:&GameEntityVecRead<'a, CoolGameEngineTID>,
-        second_ent:&GameEntityVecRead<'a, CoolGameEngineTID>,
-        world:&WorldComputeHandler<GameMap<CoolVoxel>, CoolGameEngineTID>,
+        second_ent:&VehicleEntityVecRead<'a, CoolGameEngineTID>,
+        world:&WorldComputeHandler<GameMap<CoolVoxel, Road>, CoolGameEngineTID>,
     ) {
         match self.entity_id {
             CoolGameEngineTID::entity_1(id) => {
-                first_ent.tunnels.director_out.send(GameEntityEvent::new(true, DirectorEvent::new(id, None, DirectorUpdate::LLMAddToResponses(self.clone()))));
+                first_ent.tunnels.director_out.send(GameEntityEvent::new(MustSync::Server, DirectorEvent::new(id, None, DirectorUpdate::LLMAddToResponses(self.clone()))));
             },
-            CoolGameEngineTID::entity_2(id) => {
-                second_ent.tunnels.director_out.send(GameEntityEvent::new(true, DirectorEvent::new(id, None, DirectorUpdate::LLMAddToResponses(self.clone()))));
+            CoolGameEngineTID::vehicles(id) => {
+                
             },
             _ => ()
         }

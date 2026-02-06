@@ -4,7 +4,7 @@ use hord3::horde::geometry::vec3d::{Vec3D, Vec3Df};
 use to_from_bytes::{FromBytes, ToBytes};
 use to_from_bytes_derive::{ToBytes, FromBytes};
 
-use crate::game_entity::colliders::AABB;
+use crate::driver::colliders::AABB;
 
 use super::{get_float_pos, WorldChunkPos, WorldVoxelPos};
 

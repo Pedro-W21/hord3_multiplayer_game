@@ -1,10 +1,10 @@
 use std::{collections::HashMap, path::PathBuf, sync::{atomic::{AtomicUsize, Ordering}, mpmc::{Sender}, Arc, RwLock}};
 
 use engine_derive::GameEngine;
-use hord3::{defaults::default_rendering::vectorinator_binned::{rendering_spaces::ViewportData, shaders::NoOpShader, Vectorinator}, horde::{game_engine::{engine::{GameEngine, MovingObjectID}, entity::{Entity, EntityVec, MultiplayerEntity, Renderable}, multiplayer::{GlobalComponent, GlobalEvent, HordeEventReport, HordeMultiModeChoice, HordeMultiplayer, HordeMultiplayerMode, Identify, MultiplayerEngine}, world::{World, WorldComputeHandler, WorldEvent, WorldHandler, WorldOutHandler, WorldWriteHandler}}, geometry::vec3d::{Vec3D, Vec3Df}, rendering::camera::Camera, scheduler::IndividualTask, sound::{ARWWaves, WavesHandler}}};
+use hord3::{defaults::default_rendering::vectorinator_binned::{Vectorinator, rendering_spaces::ViewportData, shaders::NoOpShader}, horde::{game_engine::{engine::{GameEngine, MovingObjectID}, entity::{Entity, EntityVec, MultiplayerEntity, Renderable, SimpleComponentEvent}, multiplayer::{GlobalComponent, GlobalEvent, HordeEventReport, HordeMultiModeChoice, HordeMultiplayer, HordeMultiplayerMode, Identify, MultiplayerEngine, MustSync}, static_type_id::HasStaticTypeID, world::{World, WorldComputeHandler, WorldEvent, WorldHandler, WorldOutHandler, WorldWriteHandler}}, geometry::{rotation::Orientation, vec3d::{Vec3D, Vec3Df}}, rendering::camera::Camera, scheduler::IndividualTask, sound::{ARWWaves, WavesHandler}}};
 use to_from_bytes_derive::{FromBytes, ToBytes};
 
-use crate::{cutscene::{game_shader::GameShader, reverse_camera_coords::reverse_from_raster_to_worldpos}, game_entity::{actions::{ActionsEvent, ActionsUpdate}, colliders::AABB, Collider, ColliderEvent, ColliderEventVariant, GameEntity, GameEntityEvent, GameEntityVecRead, GameEntityVecWrite, MovementEvent, MovementEventVariant}, game_map::{get_voxel_pos, GameMap, GameMapEvent, Voxel, VoxelLight, VoxelModel, VoxelType}, proxima_link::HordeProximaAIRequest};
+use crate::{cutscene::{game_shader::GameShader, reverse_camera_coords::reverse_from_raster_to_worldpos}, driver::{Collider, ColliderEvent, ColliderEventVariant, GameEntity, GameEntityEvent, GameEntityVecRead, GameEntityVecWrite, MovementEvent, MovementEventVariant, actions::{Action, ActionKind, ActionSource, ActionTimer, ActionsEvent, ActionsUpdate}, colliders::AABB}, game_map::{GameMap, GameMapEvent, Voxel, VoxelLight, VoxelModel, VoxelType, get_voxel_pos, road::Road}, proxima_link::HordeProximaAIRequest, vehicle::{VehicleEntity, VehicleEntityEvent, VehicleEntityVecRead, VehicleEntityVecWrite, hull::HullUpdate, locomotion::SurfaceType, position::{VehiclePosEvent, VehiclePosUpdate}}};
 
 
 #[derive(Clone, FromBytes, ToBytes, PartialEq, Debug)]
@@ -85,12 +85,13 @@ pub struct CoolVoxelType {
     pub is_light_source:Option<VoxelLight>,
     pub name:String,
     pub texture_path:Option<String>,
-    pub base_extra_voxel_data:Option<ExtraVoxelData>
+    pub base_extra_voxel_data:Option<ExtraVoxelData>,
+    pub surface_type:Option<SurfaceType>
 }
 
 impl CoolVoxelType {
-    pub fn new(empty_sides:u8, texture:usize, light_passthrough:VoxelLight, is_light_source:Option<VoxelLight>, name:String, texture_path:Option<PathBuf>, base_extra_voxel_data:Option<ExtraVoxelData>) -> Self {
-        Self { empty_sides, texture, light_passthrough, is_light_source, name, texture_path:texture_path.map(|path| {path.to_string_lossy().to_string()}), base_extra_voxel_data }
+    pub fn new(empty_sides:u8, texture:usize, light_passthrough:VoxelLight, is_light_source:Option<VoxelLight>, name:String, texture_path:Option<PathBuf>, base_extra_voxel_data:Option<ExtraVoxelData>, surface_type:Option<SurfaceType>) -> Self {
+        Self { empty_sides, texture, light_passthrough, is_light_source, name, texture_path:texture_path.map(|path| {path.to_string_lossy().to_string()}), base_extra_voxel_data, surface_type }
     }
 }
 
@@ -188,7 +189,7 @@ fn get_push_to_next_integer_coords_in_dir(start:Vec3Df, dir:Vec3Df) -> Vec3Df {
     Vec3Df::new(push_to_x, push_to_y, push_to_z)
 }
 
-fn get_push_to_next_integer_coords_in_dir_with_world(start:Vec3Df, dir:Vec3Df, world:&WorldComputeHandler<GameMap<CoolVoxel>, CoolGameEngineTID>) -> Option<Vec3Df> {
+fn get_push_to_next_integer_coords_in_dir_with_world(start:Vec3Df, dir:Vec3Df, world:&WorldComputeHandler<GameMap<CoolVoxel, Road>, CoolGameEngineTID>) -> Option<Vec3Df> {
     let test_pos = start + dir;
     match world.world.get_voxel_at(get_voxel_pos(test_pos)) {
         Some(voxel) => {    
@@ -216,7 +217,7 @@ const OTHER_DIRS:[Vec3Df ; 5] = [
     Vec3Df::new(-0.5,0.0, 0.0),
 ]; 
 
-fn compute_tick<'a>(turn:EntityTurn, id:usize, first_ent:&GameEntityVecRead<'a, CoolGameEngineTID>, second_ent:&GameEntityVecRead<'a, CoolGameEngineTID>, world:&WorldComputeHandler<GameMap<CoolVoxel>, CoolGameEngineTID>, extra_data:&ExtraData) {
+fn compute_tick<'a>(turn:EntityTurn, id:usize, first_ent:&GameEntityVecRead<'a, CoolGameEngineTID>, second_ent:&VehicleEntityVecRead<'a, CoolGameEngineTID>, world:&WorldComputeHandler<GameMap<CoolVoxel, Road>, CoolGameEngineTID>, extra_data:&ExtraData) {
     match turn {
         EntityTurn::entity_1 => {
             let movement = &first_ent.movement[id];
@@ -230,17 +231,35 @@ fn compute_tick<'a>(turn:EntityTurn, id:usize, first_ent:&GameEntityVecRead<'a, 
                     }
                 }
             }
-            first_ent.tunnels.movement_out.send(GameEntityEvent::new(true,MovementEvent::new(id, None, MovementEventVariant::AddToSpeed(total_push))));
+            first_ent.tunnels.movement_out.send(GameEntityEvent::new(MustSync::Server,MovementEvent::new(id, None, MovementEventVariant::AddToSpeed(total_push))));
 
             let actions = &first_ent.actions[id];
             let mut counter = actions.get_counter().clone();
             actions.perform(id, first_ent, second_ent, world, &mut counter, extra_data.tick.load(Ordering::Relaxed));
             first_ent.director[id].do_tick(id, first_ent, second_ent, world, extra_data.tick.load(Ordering::Relaxed), &mut counter);
 
-            first_ent.tunnels.actions_out.send(GameEntityEvent::new(true,ActionsEvent::new(id, None, ActionsUpdate::UpdateCounter(counter))));
+            first_ent.tunnels.actions_out.send(GameEntityEvent::new(MustSync::Server,ActionsEvent::new(id, None, ActionsUpdate::UpdateCounter(counter))));
         },
-        EntityTurn::entity_2 => {
+        EntityTurn::vehicles => {
+            let locomotion = &second_ent.locomotion[id];
+            let stats = &second_ent.stats[id];
+            let pos = &second_ent.position[id];
+            locomotion.compute_vehicle_and_locomotion_changes(id, &second_ent.static_types[stats.get_id()].locomotion, &world.world, stats, pos, &second_ent.tunnels.locomotion_out, &second_ent.tunnels.position_out);
+            
+            let mut total_push = Vec3D::zero();
+            for i in world.world.set_grid.get_iter_from_to(pos.pos, pos.pos + pos.spd, 3, 1.0) {
+                if i != id {
+                    let other_move = &second_ent.position[i];
+                    let distance = other_move.pos.dist(&pos.pos);
+                    if distance < 0.5 {
+                        total_push += (pos.pos - other_move.pos) * ((0.5 - distance) * 2.0)
+                    }
+                }
+            }
+            total_push.z -= GRAVITY; 
+            second_ent.tunnels.position_out.send(VehicleEntityEvent::new(MustSync::Server,VehiclePosEvent::new(id, None, VehiclePosUpdate::AddToEverySpeed(total_push, Orientation::zero()))));
 
+            
         }
     }
 }
@@ -268,7 +287,7 @@ fn get_nudge_to_nearest_next_whole(number:f32, delta_to_add:f32) -> f32 {
     }
 }
 
-fn compute_nudges_from(vertex:Vec3Df, spd:Vec3Df, collider:&Collider, world:&WorldComputeHandler<GameMap<CoolVoxel>, CoolGameEngineTID>) -> (Vec3Df, bool) {
+fn compute_nudges_from(vertex:Vec3Df, spd:Vec3Df, collider:&AABB, world:&WorldComputeHandler<GameMap<CoolVoxel, Road>, CoolGameEngineTID>) -> (Vec3Df, bool) {
     let mut touching_ground = false;
     let mut nudges = Vec3Df::all_ones();
     let voxel = match world.world.get_voxel_at(get_voxel_pos(vertex)) {
@@ -277,13 +296,13 @@ fn compute_nudges_from(vertex:Vec3Df, spd:Vec3Df, collider:&Collider, world:&Wor
     };
     if !world.world.get_voxel_types()[voxel.voxel_type as usize].is_completely_empty() {    
         let z_nudge = get_nudge_to_nearest_next_whole(vertex.z, 0.01);
-        let z_nudged_collider = (collider.collider + spd + Vec3Df::new(0.0, 0.0, z_nudge));
+        let z_nudged_collider = (*collider + spd + Vec3Df::new(0.0, 0.0, z_nudge));
         if z_nudged_collider.collision_world(&world.world) {
             let x_nudge = get_nudge_to_nearest_next_whole(vertex.x, 0.01);
             let y_nudge = get_nudge_to_nearest_next_whole(vertex.y, 0.01);
             let mut one_worked = true;
             if x_nudge.abs() < y_nudge.abs() {
-                let x_nudged_collider = (collider.collider + spd + Vec3Df::new(x_nudge, 0.0, 0.0));
+                let x_nudged_collider = (*collider + spd + Vec3Df::new(x_nudge, 0.0, 0.0));
                 if x_nudged_collider.collision_world(&world.world) {
                     one_worked = false;
                 }
@@ -294,7 +313,7 @@ fn compute_nudges_from(vertex:Vec3Df, spd:Vec3Df, collider:&Collider, world:&Wor
                 }
             }
             else {
-                let y_nudged_collider = (collider.collider + spd + Vec3Df::new(0.0, y_nudge, 0.0));
+                let y_nudged_collider = (*collider + spd + Vec3Df::new(0.0, y_nudge, 0.0));
                 if y_nudged_collider.collision_world(&world.world) {
                     one_worked = false;
                 }
@@ -305,7 +324,7 @@ fn compute_nudges_from(vertex:Vec3Df, spd:Vec3Df, collider:&Collider, world:&Wor
                 }
             }
             if !one_worked {
-                let xy_nudged_collider = (collider.collider + spd + Vec3Df::new(x_nudge, y_nudge, 0.0));
+                let xy_nudged_collider = (*collider + spd + Vec3Df::new(x_nudge, y_nudge, 0.0));
                 if xy_nudged_collider.collision_world(&world.world) {
                     nudges.x = x_nudge;
                     nudges.y = y_nudge;
@@ -328,8 +347,54 @@ fn compute_nudges_from(vertex:Vec3Df, spd:Vec3Df, collider:&Collider, world:&Wor
     (nudges, touching_ground)
 }
 
+struct Nudges {
+    new_spd:Vec3Df,
+    nudges_added:Vec3Df,
+    touching_ground:bool,
+    against_wall:bool
+}
 
-fn after_main_tick<'a>(turn:EntityTurn, id:usize, first_ent:&GameEntityVecRead<'a, CoolGameEngineTID>, second_ent:&GameEntityVecRead<'a, CoolGameEngineTID>, world:&WorldComputeHandler<GameMap<CoolVoxel>, CoolGameEngineTID>, extra_data:&ExtraData) {
+fn compute_total_nudges(pos:Vec3Df, aabb:AABB, mut spd:Vec3Df, world:&WorldComputeHandler<GameMap<CoolVoxel, Road>, CoolGameEngineTID>) -> Nudges {
+    let mut touching_ground = false;
+    let mut against_wall = false;
+    let moved_aabb = (aabb + spd);
+    let mut smallest_nudge = Vec3Df::all_ones();
+    for vertex in moved_aabb.get_ground_vertices() {
+        let (nudges, vertical) = compute_nudges_from(vertex, spd, &aabb, world);
+        touching_ground = touching_ground | vertical;
+        if touching_ground {
+            if nudges.z.abs() < smallest_nudge.z.abs() {
+                smallest_nudge = nudges;
+            }
+        }
+        else {
+            if nudges.norme_square() < smallest_nudge.norme_square() {
+                smallest_nudge = nudges;
+            }
+        }
+    }
+    if !touching_ground {
+        for vertex in moved_aabb.get_top_vertices() {
+            let (nudges, vertical) = compute_nudges_from(vertex, spd, &aabb, world);
+            if nudges.norme_square() < smallest_nudge.norme_square() {
+                smallest_nudge = nudges;
+            }
+        }
+    }
+    if smallest_nudge != Vec3Df::all_ones() {
+        if smallest_nudge.x != 0.0 || smallest_nudge.y != 0.0 && smallest_nudge.z > 0.0 {
+            against_wall = true;
+        }
+        spd += smallest_nudge;
+    }
+    Nudges { new_spd:spd, nudges_added: smallest_nudge, touching_ground, against_wall }
+    
+}
+
+const MAX_TURN_SPD:f32 = 0.02;
+
+
+fn after_main_tick<'a>(turn:EntityTurn, id:usize, first_ent:&GameEntityVecRead<'a, CoolGameEngineTID>, second_ent:&VehicleEntityVecRead<'a, CoolGameEngineTID>, world:&WorldComputeHandler<GameMap<CoolVoxel, Road>, CoolGameEngineTID>, extra_data:&ExtraData) {
     match turn {
         EntityTurn::entity_1 => {
             let movement = &first_ent.movement[id];
@@ -349,40 +414,9 @@ fn after_main_tick<'a>(turn:EntityTurn, id:usize, first_ent:&GameEntityVecRead<'
             if spd.y.abs() > 0.45 {
                 spd.y = 0.45 * spd.y.signum()
             }
-            let mut touching_ground = false;
-            let mut against_wall = false;
-            let moved_aabb = (collider.collider + spd);
-            let mut smallest_nudge = Vec3Df::all_ones();
-            for vertex in moved_aabb.get_ground_vertices() {
-                let (nudges, vertical) = compute_nudges_from(vertex, spd, collider, world);
-                touching_ground = touching_ground | vertical;
-                if touching_ground {
-                    if nudges.z.abs() < smallest_nudge.z.abs() {
-                        smallest_nudge = nudges;
-                    }
-                }
-                else {
-                    if nudges.norme_square() < smallest_nudge.norme_square() {
-                        smallest_nudge = nudges;
-                    }
-                }
-            }
-            if !touching_ground {
-                for vertex in moved_aabb.get_top_vertices() {
-                    let (nudges, vertical) = compute_nudges_from(vertex, spd, collider, world);
-                    if nudges.norme_square() < smallest_nudge.norme_square() {
-                        smallest_nudge = nudges;
-                    }
-                }
-            }
-            if smallest_nudge != Vec3Df::all_ones() {
-                if smallest_nudge.x != 0.0 || smallest_nudge.y != 0.0 && smallest_nudge.z > 0.0 {
-                    against_wall = true;
-                }
-                spd += smallest_nudge;
-            }
+            let nudges = compute_total_nudges(movement_pos, collider.collider, spd, world);
            
-            
+            spd = nudges.new_spd;
             /*match world.world.get_type_of_voxel_at(get_voxel_pos((movement_pos + spd + DOWN_DIR /*+ Vec3D::new(0.0, 0.0, -GRAVITY)*/))) {
                 Some(voxel_type) => if !touching_ground && voxel_type.is_completely_empty() {
                     spd.z -= GRAVITY;
@@ -401,24 +435,77 @@ fn after_main_tick<'a>(turn:EntityTurn, id:usize, first_ent:&GameEntityVecRead<'
                 },
                 None => ()
             }
-            if touching_ground != movement.touching_ground {
-                first_ent.tunnels.movement_out.send(GameEntityEvent::new(true,MovementEvent::new(id, None, MovementEventVariant::UpdateTouchingGround(touching_ground))));
+            if nudges.touching_ground != movement.touching_ground {
+                first_ent.tunnels.movement_out.send(GameEntityEvent::new(MustSync::Server,MovementEvent::new(id, None, MovementEventVariant::UpdateTouchingGround(nudges.touching_ground))));
             }
-            if against_wall != movement.against_wall {
-                first_ent.tunnels.movement_out.send(GameEntityEvent::new(true,MovementEvent::new(id, None, MovementEventVariant::UpdateAgainstWall(against_wall))));
+            if nudges.against_wall != movement.against_wall {
+                first_ent.tunnels.movement_out.send(GameEntityEvent::new(MustSync::Server,MovementEvent::new(id, None, MovementEventVariant::UpdateAgainstWall(nudges.against_wall))));
             }
-            first_ent.tunnels.movement_out.send(GameEntityEvent::new(false,MovementEvent::new(id, None, MovementEventVariant::UpdatePos(movement_pos + spd))));
-            first_ent.tunnels.movement_out.send(GameEntityEvent::new(true,MovementEvent::new(id, None, MovementEventVariant::UpdateSpeed(spd))));
-            first_ent.tunnels.collider_out.send(GameEntityEvent::new(true,ColliderEvent::new(id, None, ColliderEventVariant::UpdateCollider(static_type.collider.init_aabb + (movement_pos + spd )))));
+            first_ent.tunnels.movement_out.send(GameEntityEvent::new(MustSync::No,MovementEvent::new(id, None, MovementEventVariant::UpdatePos(movement_pos + spd))));
+            first_ent.tunnels.movement_out.send(GameEntityEvent::new(MustSync::Server,MovementEvent::new(id, None, MovementEventVariant::UpdateSpeed(spd))));
+            first_ent.tunnels.collider_out.send(GameEntityEvent::new(MustSync::Server,ColliderEvent::new(id, None, ColliderEventVariant::UpdateCollider(static_type.collider.init_aabb + (movement_pos + spd )))));
             
 
             let planner = &first_ent.planner[id];
             planner.update(id, 100, first_ent, second_ent, world);
-            
-            first_ent.director[id].do_after_tick(id, first_ent, second_ent, world, &extra_data, extra_data.tick.load(Ordering::Relaxed));
-            
+            let current_tick = extra_data.tick.load(Ordering::Relaxed);
+            first_ent.director[id].do_after_tick(id, first_ent, second_ent, world, &extra_data, current_tick);
+            if current_tick % 10 == 0 {
+                let random = fastrand::i16(0..50);
+                if random > 25 {
+
+                    first_ent.tunnels.actions_out.send(GameEntityEvent::new(MustSync::Server, ActionsEvent::new(id, None, ActionsUpdate::AddAction(Action::new(id, current_tick, ActionTimer::Infinite, ActionKind::Turn(0.05), ActionSource::Director)))));
+                }
+                else {  
+
+                    first_ent.tunnels.actions_out.send(GameEntityEvent::new(MustSync::Server, ActionsEvent::new(id, None, ActionsUpdate::AddAction(Action::new(id, current_tick, ActionTimer::Infinite, ActionKind::Throttle(1.0), ActionSource::Director)))));
+                }   
+            }
         },
-        _ => ()
+        EntityTurn::vehicles => {
+            let movement = &second_ent.position[id];
+            let collider = &second_ent.hull[id].complex_collider;
+            let static_type = &second_ent.static_types[second_ent.stats[id].static_id];
+            let mut movement_pos = movement.pos;
+            //let mut movement_add = Vec3D::zero();
+            let mut spd = movement.spd;
+            spd *= AIR_RESISTANCE;
+            spd.z -= GRAVITY;
+            if spd.z.abs() > 0.45 {
+                spd.z = 0.45 * spd.z.signum()
+            }
+            if spd.x.abs() > 0.45 {
+                spd.x = 0.45 * spd.x.signum()
+            }
+            if spd.y.abs() > 0.45 {
+                spd.y = 0.45 * spd.y.signum()
+            }
+            let nudges = compute_total_nudges(movement_pos, *collider.get_global_aabb(), spd, world);
+           
+            spd = nudges.new_spd;
+            dbg!(movement_pos);
+            dbg!(movement.orientation);
+            let mut turn_spd = movement.turn_spd;
+            turn_spd.yaw *= AIR_RESISTANCE;
+            turn_spd.pitch *= AIR_RESISTANCE;
+            turn_spd.roll *= AIR_RESISTANCE;
+            if turn_spd.yaw.abs() > MAX_TURN_SPD {
+                turn_spd.yaw = MAX_TURN_SPD * turn_spd.yaw.signum()
+            }
+            if turn_spd.pitch.abs() > MAX_TURN_SPD {
+                turn_spd.pitch = MAX_TURN_SPD * turn_spd.pitch.signum()
+            }
+            if turn_spd.roll.abs() > MAX_TURN_SPD {
+                turn_spd.roll = MAX_TURN_SPD * turn_spd.roll.signum()
+            }
+
+            second_ent.tunnels.position_out.send(VehicleEntityEvent::new(MustSync::Server, VehiclePosEvent::new(id, Some(CoolGameEngineTID::vehicles(id)), VehiclePosUpdate::UpdateEveryPos(movement_pos + spd, movement.orientation + turn_spd))));
+            second_ent.tunnels.position_out.send(VehicleEntityEvent::new(MustSync::Server, VehiclePosEvent::new(id, Some(CoolGameEngineTID::vehicles(id)), VehiclePosUpdate::UpdateEverySpeed(spd, turn_spd))));
+
+            second_ent.tunnels.hull_out.send(VehicleEntityEvent::new(MustSync::Server,SimpleComponentEvent::new(id, None, HullUpdate::UpdateCollider(static_type.hull.base_collider.get_moved(movement_pos + spd , movement.orientation + turn_spd)))));
+            
+            
+        }
     }
 }
 
@@ -437,8 +524,8 @@ pub struct ExtraData {
 #[do_multiplayer]
 pub struct CoolGameEngine {
     entity_1:GameEntity,
-    entity_2:GameEntity,
-    world:GameMap<CoolVoxel>,
+    vehicles:VehicleEntity,
+    world:GameMap<CoolVoxel, Road>,
     #[extra_data]
     extra_data:ExtraData
 }

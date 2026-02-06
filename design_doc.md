@@ -241,6 +241,90 @@ blocs piège :
       - police
       - wizards
 
+# How do you make vehicles :
+- pankek
+
+- hull, 3D collider mesh
+   - it will be 1 solid piece to simplify everything else
+
+- specify all locomotion equipment in entity-local coordinates
+   - wheels
+   - thrusters
+   - hover
+- all that equipment has to have :
+   - collider
+   - activation requirement(s) :
+      - nitro amount
+      - contact with surface
+      - distance to surface
+      - action from the driver
+   - motion vector when activated
+      - equipment-local coordinates, where it "pushes" you
+      - should it have accurate physics (lever) or not
+      - boolean or analog
+   - can it turn
+      - does it turn physically or does its motion vector just change
+      - limits of turning
+   - eventual local movement due to external sources/etc
+      - suspension for wheels
+      - friction
+   - can it be affected by nitro ?
+- aerodynamics ?
+   - no
+   - nuh huh
+
+- best overall architecture :
+   - drivers as the first entities
+   - vehicles as the second entities
+   - that way you can just compute vehicle/vehicle collisions
+
+
 # How do you make vehicle/ground collisions
 
-- 
+- first : AABB
+- if AABB is crossed, use more complex collider
+- check hull next :
+   - for each vertex making up the hull :
+
+
+# How do you make motion line / polygonal face collisions with pushback
+- get line/plan collision
+
+# How to make locomotion happen
+- first part of the tick :
+   - check if any locomotion equipment can activate [x]
+      - to check vehicle stats (nitro,etc) => need vehicle [x]
+      - to check surface contact/distance => need world and raycasting [x]
+      - to check driver stats (actions, etc) => need driver [x]
+   - if it can :
+      - compute the final motion vector [x]
+      - compute how much of that vector must be applied [x]
+      - get the center of gravity and application point [x]
+      - bras de levier et tout (jsp comment on fait mtn) [x]
+      - implement pidget over ip (?)
+   - add gravity to speed in any case
+   - check collision with other vechicles there
+- second part of the tick :
+   - check locomotion equipment collision with the world
+   - rough check -> get local pos shifted to world pos, rotate equipment down, raycast until you hit the world and check if it's within bounding collider
+      - store if touching the ground and which ground it's touching, and if not the distance to the ground
+   - get necessary pushback from this 
+   - check hull collision with the world
+
+# how to improve multiplayer AGAIN
+
+- seperate must_sync bool into enum
+   - MustSync
+      - No
+      - Server
+      - Client
+      - ClientIfReservedID
+   - stuff is only synced accordingly, e.g. actions are client synced if reserved ID, positions are server synced
+
+- DONE
+
+# how to do road generation
+
+- choose start chunk pos and direction
+- every "step", advance a random amount of steps in the desired direction and change direction
+- store all affected chunks, generate them
