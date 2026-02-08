@@ -1,5 +1,5 @@
 use entity_derive::Entity;
-use hord3::{defaults::default_rendering::vectorinator_binned::{Vectorinator, VectorinatorWrite, meshes::MeshInstance}, horde::{game_engine::{entity::{Component, ComponentEvent, EVecStopsIn, EVecStopsOut, Entity, EntityID, EntityVec, MultiplayerEntity, NewEntity, StaticEntity}, multiplayer::{Identify, MustSync}, position::EntityPosition, static_type_id::HasStaticTypeID}, geometry::vec3d::Vec3Df}};
+use hord3::{defaults::default_rendering::vectorinator_binned::{Vectorinator, VectorinatorWrite, meshes::MeshInstance}, horde::{game_engine::{entity::{Component, ComponentEvent, EVecStopsIn, EVecStopsOut, Entity, EntityID, EntityVec, MultiplayerEntity, NewEntity, StaticEntity}, multiplayer::{Identify, MustSync}, position::EntityPosition, static_type_id::HasStaticTypeID}, geometry::{rotation::Rotation, vec3d::Vec3Df}}};
 
 use crate::{cutscene::game_shader::GameShader, vehicle::{hull::Hull, locomotion::Locomotion, mesh_info::VehicleMeshInfo, position::VehiclePosition, vehicle_stats::VehicleStats}};
 
@@ -28,6 +28,7 @@ impl<'a, ID:Identify> RenderVehicleEntity<VectorinatorWrite<'a>, ID> for Vehicle
         match mesh_info.instance_id {
             Some(id) => {
                 let mut instance = rendering_data.meshes.instances[2].get_instance_mut(id);
+                
                 instance.change_pos(position.pos);
                 instance.change_orient(position.orientation);
             },
@@ -36,6 +37,27 @@ impl<'a, ID:Identify> RenderVehicleEntity<VectorinatorWrite<'a>, ID> for Vehicle
                     rendering_data.meshes.add_mesh(static_type.mesh_info.mesh_data.clone());
                 }
                 mesh_info.instance_id = Some(rendering_data.meshes.add_instance(MeshInstance::new(position.pos, position.orientation, static_type.mesh_info.mesh_id.clone(), true, false, false), 2))
+            }
+        }
+        match &mesh_info.loco_instances_ids {
+            Some(ids) => {
+                for (i, eq) in locomotion.equipment.iter().enumerate() {
+                    let mut instance = rendering_data.meshes.instances[2].get_instance_mut(ids[i]);
+                    let rotation = Rotation::from_orientation(position.orientation);
+                    instance.change_pos(position.pos + rotation.rotate(eq.current_local_position));
+                    instance.change_orient(position.orientation + eq.current_local_orient);
+                }
+            },
+            None => {
+                let mut ids = Vec::with_capacity(static_type.locomotion.equipment.len());
+                for (i, eq) in locomotion.equipment.iter().enumerate() {
+                    if !rendering_data.meshes.does_mesh_exist(&static_type.mesh_info.eq_mesh_ids[i]) {
+                        rendering_data.meshes.add_mesh(static_type.mesh_info.eq_mesh_data[i].clone());
+                    }
+                    let rotation = Rotation::from_orientation(position.orientation);
+                    ids.push(rendering_data.meshes.add_instance(MeshInstance::new(position.pos + rotation.rotate(eq.current_local_position), position.orientation + eq.current_local_orient, static_type.mesh_info.eq_mesh_ids[i].clone(), true, false, false), 2))
+                }
+                mesh_info.loco_instances_ids = Some(ids)
             }
         }
     }

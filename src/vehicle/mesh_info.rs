@@ -4,13 +4,16 @@ use to_from_bytes_derive::{FromBytes, ToBytes};
 
 #[derive(Clone, ToBytes, FromBytes, PartialEq)]
 pub struct VehicleMeshInfo {
-    pub instance_id:Option<usize>
+    pub instance_id:Option<usize>,
+    pub loco_instances_ids:Option<Vec<usize>>
 }
 
 #[derive(Clone)]
 pub struct StaticVMeshInfo {
     pub mesh_data:Mesh,
     pub mesh_id:MeshID,
+    pub eq_mesh_data:Vec<Mesh>,
+    pub eq_mesh_ids:Vec<MeshID>
 }
 
 impl StaticComponent for StaticVMeshInfo {
@@ -34,6 +37,6 @@ impl<ID:Identify> Component<ID> for VehicleMeshInfo {
     type SC = StaticVMeshInfo;
     type CE = SimpleComponentEvent<ID, VMeshInfoUpdate>;
     fn from_static(static_comp:&Self::SC) -> Self {
-        Self { instance_id: None }
+        Self { instance_id: None, loco_instances_ids:None }
     }
 }

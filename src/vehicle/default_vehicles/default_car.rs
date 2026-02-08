@@ -10,6 +10,11 @@ pub fn get_default_car_type() -> StaticVehicleEntity<CoolGameEngineTID> {
                     
                     -Vec3Df::new(2.0, 1.0, 0.0),
                 );
+    let wheel_aabb = AABB::new(
+                    Vec3Df::new(1.0, 0.75, 0.75),
+                    
+                    -Vec3Df::new(0.75, 0.75, 0.75),
+                );
     let mut loco_equipments = get_default_loco_equips(aabb);
     StaticVehicleEntity {
         position: StaticVehiclePos {},
@@ -19,7 +24,19 @@ pub fn get_default_car_type() -> StaticVehicleEntity<CoolGameEngineTID> {
         },
         mesh_info: StaticVMeshInfo {
             mesh_id:MeshID::Named(String::from("default_car")),
-            mesh_data:Mesh::new(MeshLODS::new(vec![MeshLODType::Mesh(Arc::new(simple_prism(aabb.get_first_point(), aabb.get_second_point(), 3, (255,255,255))))]), "default_car".to_string(), aabb.get_first_point().dist(&aabb.get_second_point()))
+            mesh_data:Mesh::new(MeshLODS::new(vec![MeshLODType::Mesh(Arc::new(simple_prism(aabb.get_first_point(), aabb.get_second_point(), 3, (255,255,255))))]), "default_car".to_string(), aabb.get_first_point().dist(&aabb.get_second_point())),
+            eq_mesh_ids:vec![
+                MeshID::Named(String::from("default_car_front_wheel")),
+                MeshID::Named(String::from("default_car_back_wheel")),
+                MeshID::Named(String::from("default_car_back_wheel")),
+                MeshID::Named(String::from("default_car_front_wheel")),
+            ],
+            eq_mesh_data:vec![
+                Mesh::new(MeshLODS::new(vec![MeshLODType::Mesh(Arc::new(simple_prism(wheel_aabb.get_first_point(), wheel_aabb.get_second_point(), 4, (255,255,255))))]), "default_car_front_wheel".to_string(), wheel_aabb.get_first_point().dist(&wheel_aabb.get_second_point())),
+                Mesh::new(MeshLODS::new(vec![MeshLODType::Mesh(Arc::new(simple_prism(wheel_aabb.get_first_point(), wheel_aabb.get_second_point(), 5, (255,255,255))))]), "default_car_back_wheel".to_string(), wheel_aabb.get_first_point().dist(&wheel_aabb.get_second_point())),
+                Mesh::new(MeshLODS::new(vec![MeshLODType::Mesh(Arc::new(simple_prism(wheel_aabb.get_first_point(), wheel_aabb.get_second_point(), 5, (255,255,255))))]), "default_car_back_wheel".to_string(), wheel_aabb.get_first_point().dist(&wheel_aabb.get_second_point())),
+                Mesh::new(MeshLODS::new(vec![MeshLODType::Mesh(Arc::new(simple_prism(wheel_aabb.get_first_point(), wheel_aabb.get_second_point(), 4, (255,255,255))))]), "default_car_front_wheel".to_string(), wheel_aabb.get_first_point().dist(&wheel_aabb.get_second_point())),
+            ]
         },
         hull: StaticHull {
             base_collider:ComplexCollider::new(
@@ -47,7 +64,7 @@ fn get_default_loco_equips(aabb:AABB) -> Vec<StaticLocomotionEquipment> {
             ActivationRequirements::new(
                 vec![
                     ActivationRequirement::SurfaceContact(Some(SurfaceType::Ground)),
-                    ActivationRequirement::DriverAction(DriverAction::Throttle { from: 0.1, to: 1.0 })
+                    ActivationRequirement::DriverAction(DriverAction::Throttle { from: -1.0, to: 1.0 })
                 ],
                 ActivationOutput::ActivateMotion,
             ),

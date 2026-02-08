@@ -7,7 +7,7 @@ use crate::{driver::{actions::{Action, ActionKind, ActionResult}, colliders::Bou
 
 #[derive(Clone, Debug, ToBytes, FromBytes, PartialEq)]
 pub struct Locomotion {
-    equipment:Vec<LocomotionEquipment>,
+    pub equipment:Vec<LocomotionEquipment>,
     driver_actions:Vec<(Action, ActionResult)>,
 }
 
@@ -121,10 +121,10 @@ impl<ID:Identify> ComponentEvent<Locomotion, ID> for LocomotionEvent<ID> {
 
 #[derive(Clone, Debug, ToBytes, FromBytes, PartialEq)]
 pub struct LocomotionEquipment {
-    static_equipment:usize,
-    current_local_position:Vec3Df,
+    pub static_equipment:usize,
+    pub current_local_position:Vec3Df,
     current_local_speed:Vec3Df,
-    current_local_orient:Orientation,
+    pub current_local_orient:Orientation,
     current_local_turn_speed:Orientation,
     current_collider:BoundingCollider,
 }
@@ -244,7 +244,7 @@ impl LocomotionEquipment {
                 let lever = ap - center_of_gravity;
                 let moment = lever.cross(&rotated_motion_vector) / vehicle_stats.mass;
                 let orient_change = Orientation::new(moment.z, moment.y, moment.x);
-                let normalised_dot = rotated_motion_vector.normalise().dot(&lever.normalise());
+                let normalised_dot = rotated_motion_vector.normalise().dot(&lever.normalise()).abs();
                 let resulting_force = (rotated_motion_vector * normalised_dot) / vehicle_stats.mass;
                 
                 (resulting_force, orient_change)

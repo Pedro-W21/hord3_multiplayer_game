@@ -208,6 +208,7 @@ fn get_push_to_next_integer_coords_in_dir_with_world(start:Vec3Df, dir:Vec3Df, w
 
 const GRAVITY:f32 = 9.81/180.0;
 const AIR_RESISTANCE:f32 = 0.99;
+const TURN_RESISTANCE:f32 = 0.7;
 const DOWN_DIR:Vec3Df = Vec3Df::new(0.0,0.0, -0.5);
 const OTHER_DIRS:[Vec3Df ; 5] = [
     Vec3Df::new(0.0,0.0, 0.5),
@@ -287,9 +288,10 @@ fn get_nudge_to_nearest_next_whole(number:f32, delta_to_add:f32) -> f32 {
     }
 }
 
-fn compute_nudges_from(vertex:Vec3Df, spd:Vec3Df, collider:&AABB, world:&WorldComputeHandler<GameMap<CoolVoxel, Road>, CoolGameEngineTID>) -> (Vec3Df, bool) {
+fn compute_nudges_from(vertex:Vec3Df, spd:Vec3Df, collider:&AABB, world:&WorldComputeHandler<GameMap<CoolVoxel, Road>, CoolGameEngineTID>, bottom:bool) -> (Vec3Df, bool, Vec3Df) {
     let mut touching_ground = false;
     let mut nudges = Vec3Df::all_ones();
+    let mut pos_nudge = Vec3Df::zero();
     let voxel = match world.world.get_voxel_at(get_voxel_pos(vertex)) {
         Some(voxel) => voxel.clone(),
         None => {CoolVoxel::new(0, 0, VoxelLight::zero_light(),None)}
@@ -298,44 +300,55 @@ fn compute_nudges_from(vertex:Vec3Df, spd:Vec3Df, collider:&AABB, world:&WorldCo
         let z_nudge = get_nudge_to_nearest_next_whole(vertex.z, 0.01);
         let z_nudged_collider = (*collider + spd + Vec3Df::new(0.0, 0.0, z_nudge));
         if z_nudged_collider.collision_world(&world.world) {
-            let x_nudge = get_nudge_to_nearest_next_whole(vertex.x, 0.01);
-            let y_nudge = get_nudge_to_nearest_next_whole(vertex.y, 0.01);
-            let mut one_worked = true;
-            if x_nudge.abs() < y_nudge.abs() {
-                let x_nudged_collider = (*collider + spd + Vec3Df::new(x_nudge, 0.0, 0.0));
-                if x_nudged_collider.collision_world(&world.world) {
-                    one_worked = false;
+            let z_nudged_collider_2 = (*collider + spd + Vec3Df::new(0.0, 0.0, z_nudge + 1.0)); // see if you can step
+            if !bottom || z_nudged_collider_2.collision_world(&world.world) {
+                let x_nudge = get_nudge_to_nearest_next_whole(vertex.x, 0.01);
+                let y_nudge = get_nudge_to_nearest_next_whole(vertex.y, 0.01);
+                let mut one_worked = true;
+                if x_nudge.abs() < y_nudge.abs() {
+                    let x_nudged_collider = (*collider + spd + Vec3Df::new(x_nudge, 0.0, 0.0));
+                    if x_nudged_collider.collision_world(&world.world) {
+                        one_worked = false;
+                    }
+                    else {
+                        nudges.x = x_nudge;
+                        nudges.z = 0.0;
+                        nudges.y = 0.0;
+                    }
                 }
                 else {
-                    nudges.x = x_nudge;
-                    nudges.z = 0.0;
-                    nudges.y = 0.0;
+                    let y_nudged_collider = (*collider + spd + Vec3Df::new(0.0, y_nudge, 0.0));
+                    if y_nudged_collider.collision_world(&world.world) {
+                        one_worked = false;
+                    }
+                    else {
+                        nudges.y = y_nudge;
+                        nudges.x = 0.0;
+                        nudges.z = 0.0;
+                    }
+                }
+                if !one_worked {
+                    let xy_nudged_collider = (*collider + spd + Vec3Df::new(x_nudge, y_nudge, 0.0));
+                    if xy_nudged_collider.collision_world(&world.world) {
+                        nudges.x = x_nudge;
+                        nudges.y = y_nudge;
+                        nudges.z = z_nudge;
+                    }
+                    else {
+                        nudges.x = x_nudge;
+                        nudges.y = y_nudge;
+                        nudges.z = 0.0
+                    }
                 }
             }
             else {
-                let y_nudged_collider = (*collider + spd + Vec3Df::new(0.0, y_nudge, 0.0));
-                if y_nudged_collider.collision_world(&world.world) {
-                    one_worked = false;
-                }
-                else {
-                    nudges.y = y_nudge;
-                    nudges.x = 0.0;
-                    nudges.z = 0.0;
-                }
+                touching_ground = true;
+                nudges.z = z_nudge;
+                pos_nudge.z = 1.0;
+                nudges.x = 0.0;
+                nudges.y = 0.0;
             }
-            if !one_worked {
-                let xy_nudged_collider = (*collider + spd + Vec3Df::new(x_nudge, y_nudge, 0.0));
-                if xy_nudged_collider.collision_world(&world.world) {
-                    nudges.x = x_nudge;
-                    nudges.y = y_nudge;
-                    nudges.z = z_nudge;
-                }
-                else {
-                    nudges.x = x_nudge;
-                    nudges.y = y_nudge;
-                    nudges.z = 0.0
-                }
-            }
+            
         }
         else {
             touching_ground = true;
@@ -344,14 +357,15 @@ fn compute_nudges_from(vertex:Vec3Df, spd:Vec3Df, collider:&AABB, world:&WorldCo
             nudges.y = 0.0;
         }   
     }
-    (nudges, touching_ground)
+    (nudges, touching_ground, pos_nudge)
 }
 
 struct Nudges {
     new_spd:Vec3Df,
     nudges_added:Vec3Df,
     touching_ground:bool,
-    against_wall:bool
+    against_wall:bool,
+    add_to_pos:Vec3Df
 }
 
 fn compute_total_nudges(pos:Vec3Df, aabb:AABB, mut spd:Vec3Df, world:&WorldComputeHandler<GameMap<CoolVoxel, Road>, CoolGameEngineTID>) -> Nudges {
@@ -359,8 +373,12 @@ fn compute_total_nudges(pos:Vec3Df, aabb:AABB, mut spd:Vec3Df, world:&WorldCompu
     let mut against_wall = false;
     let moved_aabb = (aabb + spd);
     let mut smallest_nudge = Vec3Df::all_ones();
+    let mut add_to_pos = Vec3D::zero();
     for vertex in moved_aabb.get_ground_vertices() {
-        let (nudges, vertical) = compute_nudges_from(vertex, spd, &aabb, world);
+        let (nudges, vertical, pos_nudge) = compute_nudges_from(vertex, spd, &aabb, world, true);
+        if pos_nudge != Vec3Df::zero() {
+            add_to_pos = pos_nudge;
+        }
         touching_ground = touching_ground | vertical;
         if touching_ground {
             if nudges.z.abs() < smallest_nudge.z.abs() {
@@ -375,7 +393,7 @@ fn compute_total_nudges(pos:Vec3Df, aabb:AABB, mut spd:Vec3Df, world:&WorldCompu
     }
     if !touching_ground {
         for vertex in moved_aabb.get_top_vertices() {
-            let (nudges, vertical) = compute_nudges_from(vertex, spd, &aabb, world);
+            let (nudges, vertical, _) = compute_nudges_from(vertex, spd, &aabb, world, false);
             if nudges.norme_square() < smallest_nudge.norme_square() {
                 smallest_nudge = nudges;
             }
@@ -387,7 +405,7 @@ fn compute_total_nudges(pos:Vec3Df, aabb:AABB, mut spd:Vec3Df, world:&WorldCompu
         }
         spd += smallest_nudge;
     }
-    Nudges { new_spd:spd, nudges_added: smallest_nudge, touching_ground, against_wall }
+    Nudges { new_spd:spd, nudges_added: smallest_nudge, touching_ground, against_wall, add_to_pos }
     
 }
 
@@ -450,7 +468,7 @@ fn after_main_tick<'a>(turn:EntityTurn, id:usize, first_ent:&GameEntityVecRead<'
             planner.update(id, 100, first_ent, second_ent, world);
             let current_tick = extra_data.tick.load(Ordering::Relaxed);
             first_ent.director[id].do_after_tick(id, first_ent, second_ent, world, &extra_data, current_tick);
-            if current_tick % 10 == 0 {
+            /*if current_tick % 10 == 0 {
                 let random = fastrand::i16(0..50);
                 if random > 25 {
 
@@ -460,7 +478,7 @@ fn after_main_tick<'a>(turn:EntityTurn, id:usize, first_ent:&GameEntityVecRead<'
 
                     first_ent.tunnels.actions_out.send(GameEntityEvent::new(MustSync::Server, ActionsEvent::new(id, None, ActionsUpdate::AddAction(Action::new(id, current_tick, ActionTimer::Infinite, ActionKind::Throttle(1.0), ActionSource::Director)))));
                 }   
-            }
+            }*/
         },
         EntityTurn::vehicles => {
             let movement = &second_ent.position[id];
@@ -486,9 +504,9 @@ fn after_main_tick<'a>(turn:EntityTurn, id:usize, first_ent:&GameEntityVecRead<'
             dbg!(movement_pos);
             dbg!(movement.orientation);
             let mut turn_spd = movement.turn_spd;
-            turn_spd.yaw *= AIR_RESISTANCE;
-            turn_spd.pitch *= AIR_RESISTANCE;
-            turn_spd.roll *= AIR_RESISTANCE;
+            turn_spd.yaw *= AIR_RESISTANCE * TURN_RESISTANCE;
+            turn_spd.pitch *= AIR_RESISTANCE * TURN_RESISTANCE;
+            turn_spd.roll *= AIR_RESISTANCE * TURN_RESISTANCE;
             if turn_spd.yaw.abs() > MAX_TURN_SPD {
                 turn_spd.yaw = MAX_TURN_SPD * turn_spd.yaw.signum()
             }
@@ -499,7 +517,7 @@ fn after_main_tick<'a>(turn:EntityTurn, id:usize, first_ent:&GameEntityVecRead<'
                 turn_spd.roll = MAX_TURN_SPD * turn_spd.roll.signum()
             }
 
-            second_ent.tunnels.position_out.send(VehicleEntityEvent::new(MustSync::Server, VehiclePosEvent::new(id, Some(CoolGameEngineTID::vehicles(id)), VehiclePosUpdate::UpdateEveryPos(movement_pos + spd, movement.orientation + turn_spd))));
+            second_ent.tunnels.position_out.send(VehicleEntityEvent::new(MustSync::Server, VehiclePosEvent::new(id, Some(CoolGameEngineTID::vehicles(id)), VehiclePosUpdate::UpdateEveryPos(movement_pos + spd + nudges.add_to_pos, movement.orientation + turn_spd))));
             second_ent.tunnels.position_out.send(VehicleEntityEvent::new(MustSync::Server, VehiclePosEvent::new(id, Some(CoolGameEngineTID::vehicles(id)), VehiclePosUpdate::UpdateEverySpeed(spd, turn_spd))));
 
             second_ent.tunnels.hull_out.send(VehicleEntityEvent::new(MustSync::Server,SimpleComponentEvent::new(id, None, HullUpdate::UpdateCollider(static_type.hull.base_collider.get_moved(movement_pos + spd , movement.orientation + turn_spd)))));

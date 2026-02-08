@@ -1,7 +1,7 @@
 
 use std::{collections::HashMap, f32::consts::PI, net::Ipv4Addr, path::PathBuf, simd::Simd, sync::{atomic::{AtomicUsize, Ordering}, mpmc::{self, channel}, Arc, RwLock}, thread, time::{Duration, Instant}};
 
-use crate::{driver::{colliders::AABB, stats::{StaticStats, Stats}}, game_map::road::Road, server::server_tasks::GameUserEvent, vehicle::{NewVehicleEntity, VehicleEntityVec, default_vehicles::default_car::get_default_car_type, position::VehiclePosition, vehicle_stats::VehicleStats}};
+use crate::{driver::{colliders::AABB, stats::{StaticStats, Stats}}, game_map::{GameMapEvent, road::Road}, server::server_tasks::GameUserEvent, vehicle::{NewVehicleEntity, VehicleEntityVec, default_vehicles::default_car::get_default_car_type, position::VehiclePosition, vehicle_stats::VehicleStats}};
 use cosmic_text::{Color, Font, Metrics};
 use crate::cutscene::{camera_movement::{CameraMovement, CameraMovementDuration, CameraMovementElement, CameraSequence}, demo_cutscene::{get_demo_cutscene, get_empty_cutscene}, game_shader::GameShader, real_demo_cutscene::get_real_demo_cutscene, write_in_the_air::get_positions_of_air_written_text, written_texture::get_written_texture_buffer};
 use crate::day_night::DayNight;
@@ -355,6 +355,16 @@ pub fn server_func() {
                 reader.tunnels.actions_out.send(GameEntityEvent::new(true,ActionsEvent::new(ent, None, ActionsUpdate::AddAction(Action::new(next_action, engine.extra_data.tick.load(Ordering::Relaxed), ActionTimer::Delay(500), ActionKind::PathToPosition(Vec3Df::new(target_pos.x as f32, target_pos.y as f32, target_pos.z as f32), 0.7), ActionSource::Director)))));
                 reader.tunnels.actions_out.send(GameEntityEvent::new(true,ActionsEvent::new(ent, None, ActionsUpdate::UpdateCounter(counter))));
             }*/
+            if i < 100 {
+                let mut world_write = engine.world.world.write().unwrap();
+                let dims = world_write.get_chunk_dims_vector_f();
+                world_write.generator.step_forwards(3.0, &dims);
+                let chunks = world_write.generator.get_chunks_to_generate(3.0, &world_write);
+                let data = world_write.generate_chunks_with_generator_and_get_them(chunks);
+                for (c_pos, chunk) in data {
+                    engine.world.tunnels_out.send_event(GameMapEvent::NewChunk(c_pos, chunk));
+                }
+            }
             engine.extra_data.tick.fetch_add(1, Ordering::Relaxed);
             0
         };

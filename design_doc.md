@@ -328,3 +328,13 @@ blocs piège :
 - choose start chunk pos and direction
 - every "step", advance a random amount of steps in the desired direction and change direction
 - store all affected chunks, generate them
+
+# how to optimize terrain LOD generation
+- compute which directions you actually need
+- if empty, empty lods
+- if not empty
+   - if full of one type 
+      - look at adjacent chunks
+      - if also full of one full type, remove that direction from further compute
+      - otherwise, keep that direction
+      

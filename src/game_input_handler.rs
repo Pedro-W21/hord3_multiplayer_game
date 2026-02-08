@@ -1,7 +1,9 @@
 use std::{collections::HashSet, f32::consts::PI, sync::{atomic::{AtomicI32, AtomicU8, Ordering}, Arc}};
 
 use crossbeam::channel::Receiver;
-use hord3::horde::{frontend::{interact::Button, MouseState, WindowingEvent, WindowingEventVariant}, geometry::{rotation::Orientation, vec3d::{Vec3D, Vec3Df}}, rendering::camera::Camera};
+use hord3::horde::{frontend::{MouseState, WindowingEvent, WindowingEventVariant, interact::Button}, game_engine::multiplayer::MustSync, geometry::{rotation::Orientation, vec3d::{Vec3D, Vec3Df}}, rendering::camera::Camera};
+
+use crate::{driver::{GameEntityEvent, GameEntityVecRead, actions::{Action, ActionKind, ActionSource, ActionTimer, ActionsEvent, ActionsUpdate}}, game_engine::CoolGameEngineTID};
 
 pub struct GameInputHandler {
     last_mouse_pos:(i32,i32,i8),
@@ -37,7 +39,7 @@ impl GameInputHandler {
     pub fn get_current_keyboard(&self) -> HashSet<Button> {
         self.current_keyboard.clone()
     }
-    pub fn get_new_camera(&mut self) -> Camera {
+    pub fn get_new_camera<'a>(&mut self, first_ent:&GameEntityVecRead<'a, CoolGameEngineTID>, tick:usize) -> Camera {
         self.current_mouse_pos.update_local();
         let new_mouse_pos = (self.current_mouse_pos.get_current_state().x, self.current_mouse_pos.get_current_state().y, self.current_mouse_pos.get_current_state().left);
         let delta = (new_mouse_pos.0 - self.last_mouse_pos.0, new_mouse_pos.1 - self.last_mouse_pos.1);
@@ -62,6 +64,19 @@ impl GameInputHandler {
         }
         if self.current_keyboard.contains(&Button::S) {
             self.last_camera_used.pos += Orientation::new(self.last_camera_used.orient.yaw + PI/2.0, PI/2.0, 0.0).into_vec() * speed_coef;
+        }
+
+        if self.current_keyboard.contains(&Button::I) {
+            first_ent.tunnels.actions_out.send(GameEntityEvent::new(MustSync::Client, ActionsEvent::new(0, None, ActionsUpdate::AddAction(Action::new(0, tick, ActionTimer::Infinite, ActionKind::Throttle(1.0), ActionSource::Director)))));
+        }
+        if self.current_keyboard.contains(&Button::K) {
+            first_ent.tunnels.actions_out.send(GameEntityEvent::new(MustSync::Client, ActionsEvent::new(0, None, ActionsUpdate::AddAction(Action::new(0, tick, ActionTimer::Infinite, ActionKind::Throttle(-0.3), ActionSource::Director)))));
+        }
+        if self.current_keyboard.contains(&Button::J) {
+            first_ent.tunnels.actions_out.send(GameEntityEvent::new(MustSync::Client, ActionsEvent::new(0, None, ActionsUpdate::AddAction(Action::new(0, tick, ActionTimer::Infinite, ActionKind::Turn(-0.02), ActionSource::Director)))));
+        }
+        if self.current_keyboard.contains(&Button::L) {
+            first_ent.tunnels.actions_out.send(GameEntityEvent::new(MustSync::Client, ActionsEvent::new(0, None, ActionsUpdate::AddAction(Action::new(0, tick, ActionTimer::Infinite, ActionKind::Turn(0.02), ActionSource::Director)))));
         }
         
         /*while let Ok(evt) = self.outside_events.try_recv() {

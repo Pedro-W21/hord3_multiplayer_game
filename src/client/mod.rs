@@ -395,7 +395,8 @@ pub fn client_func() {
     println!("Hello, world!");
     let mut scheduler = HordeScheduler::new(queue.clone(), handler, 16);
     let mut input_handler = GameInputHandler::new(mouse2.clone(), 3.0, outside_events);
-    let mut tile_editor = TileEditorData::new(simpleui.clone(), input_handler.get_new_camera(), mouse2);
+    let cam = Camera::empty();
+    let mut tile_editor = TileEditorData::new(simpleui.clone(), cam, mouse2);
     {
         tile_editor.initial_ui_work(&vectorinator.get_texture_read());
     }
@@ -435,7 +436,9 @@ pub fn client_func() {
             //vectorinator.shader_data.do_normals.store(!new_night_state, Ordering::Relaxed);
             *vectorinator.shader_data.sun_dir.write().unwrap() = -new_normal_vec;
             *vectorinator.shader_data.fog_color.write().unwrap() = rgb_to_argb(new_fog_col);
-            let new_camera =input_handler.get_new_camera();
+            let read = engine.entity_1.get_read();
+            let tick = engine.extra_data.tick.fetch_add(1, Ordering::Relaxed);
+            let new_camera = input_handler.get_new_camera(&read, tick);
             *writer.camera = new_camera.clone();//(i as f32 / 500.0) * PI/2.0));
             /*if i > 400 {
                 let mut reader = engine.entity_1.get_read();
@@ -451,7 +454,6 @@ pub fn client_func() {
             }*/
             // dbg!(new_camera.clone());
             engine.extra_data.current_render_data.write().unwrap().0 = new_camera.clone();
-            engine.extra_data.tick.fetch_add(1, Ordering::Relaxed);
 
             /*thread::sleep(Duration::from_millis(10));*/
             new_camera

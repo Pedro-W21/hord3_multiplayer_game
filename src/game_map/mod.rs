@@ -756,7 +756,7 @@ impl<V:Voxel, G:Generator<V>> GameMap<V, G> {
     }
     
     fn get_lod_with_step(&self, chunk:&MapChunk<V>, around:[Option<&MapChunk<V>> ; 6], step:i32) -> MeshLOD {
-        if chunk.only_1_type.is_some() {
+        if let Some(voxel) = chunk.only_1_type.clone() && self.voxel_types[voxel.voxel_id()].is_completely_empty() {
             MeshLOD::new(Vec::new(), Vec::new(), Vec::new(), MeshTriangles::with_capacity(0))
         }
         else {
@@ -768,6 +768,36 @@ impl<V:Voxel, G:Generator<V>> GameMap<V, G> {
             let scaler = Vec3D::new(step as f32, step as f32, step as f32);
             let float_step = step as f32;
             let mut taken_dirs = vec![0 ; self.dims.chunk_height * self.dims.chunk_length * self.dims.chunk_width];
+            let mut kept_dirs = Vec::with_capacity(6);
+            if let Some(voxel) = chunk.only_1_type.clone() {
+                for (i, ch) in around.iter().enumerate() {
+                    if let Some(chunk2) = ch {
+                        if let Some(voxel) = chunk2.only_1_type.clone() && self.voxel_types[voxel.voxel_id()].is_completely_empty() {
+                            kept_dirs.push((i, DIR_MASK[i]));
+                        }
+                        else if let None = chunk2.only_1_type.clone() {
+                            kept_dirs.push((i, DIR_MASK[i]));
+                        }
+                    }
+                }
+            }
+            else {
+                for (i, ch) in around.iter().enumerate() {
+                    if let Some(chunk2) = ch {
+                        
+                        if let Some(voxel) = chunk2.only_1_type.clone() && self.voxel_types[voxel.voxel_id()].is_completely_empty() {
+                            kept_dirs.push((i, DIR_MASK[i]));
+                        }
+                        else if let None = chunk2.only_1_type.clone() {
+                            kept_dirs.push((i, DIR_MASK[i]));
+                        }
+                    }
+                    else {
+                        kept_dirs.push((i, DIR_MASK[i]));
+                    }
+                }
+            }
+            
             println!("Started {} {} {}", chunk.chunk_coord.x, chunk.chunk_coord.y, chunk.chunk_coord.z);
             for x in (0..self.dims.chunk_length_i).step_by(step as usize) {
                 for y in (0..self.dims.chunk_width_i).step_by(step as usize) {
@@ -775,24 +805,24 @@ impl<V:Voxel, G:Generator<V>> GameMap<V, G> {
 
                         //let voxels = chunk.get_voxels_around(Vec3D::new(x, y, z), around, &self.dims);
                         //let voxel = chunk.get_at_local(Vec3D::new(x, y, z), &self.dims).unwrap();
-                        for (i, mask) in DIR_MASK.iter().enumerate() {
+                        for (i, mask) in kept_dirs.iter() {
                             if taken_dirs[(x as usize + (y as usize * self.dims.chunk_length) + (z as usize * self.dims.chunk_slice_area))] & *mask == *mask {
                                 continue
                             }
                             else {
                                 let mut first_dir_greed = 1;
                                 let mut second_dir_greed = 1;
-                                let mut face_data = self.is_area_all_same_in_dir(chunk, around, step, (x,y,z), i, *mask, (first_dir_greed, second_dir_greed), &scaler, &mut taken_dirs);
+                                let mut face_data = self.is_area_all_same_in_dir(chunk, around, step, (x,y,z), *i, *mask, (first_dir_greed, second_dir_greed), &scaler, &mut taken_dirs);
 
                                 while (first_dir_greed + 1) * step < self.dims.chunk_height_i && (second_dir_greed + 1) * step < self.dims.chunk_height_i && face_data.is_some() {
                                     
                                     //println!("{} {} {}", first_dir_greed, second_dir_greed, step);
-                                    let mut first_test_face = self.is_area_all_same_in_dir(chunk, around, step, (x,y,z), i, *mask, (first_dir_greed + 1, second_dir_greed), &scaler, &mut taken_dirs);
+                                    let mut first_test_face = self.is_area_all_same_in_dir(chunk, around, step, (x,y,z), *i, *mask, (first_dir_greed + 1, second_dir_greed), &scaler, &mut taken_dirs);
                                     if first_test_face.is_some() {
                                         first_dir_greed += 1;
                                     }
 
-                                    let mut second_test_face = self.is_area_all_same_in_dir(chunk, around, step, (x,y,z), i, *mask, (first_dir_greed, second_dir_greed + 1), &scaler, &mut taken_dirs);
+                                    let mut second_test_face = self.is_area_all_same_in_dir(chunk, around, step, (x,y,z), *i, *mask, (first_dir_greed, second_dir_greed + 1), &scaler, &mut taken_dirs);
                                     if second_test_face.is_some() {
                                         second_dir_greed += 1;
                                     }
@@ -804,13 +834,13 @@ impl<V:Voxel, G:Generator<V>> GameMap<V, G> {
                                     Some((full_texture, finished_collux)) => {
                                         let u_s = first_dir_greed as f32;
                                         let v_s = second_dir_greed as f32;
-                                        let (mut f_dir, mut s_dir) = PERPENDICULAR[i].clone();
+                                        let (mut f_dir, mut s_dir) = PERPENDICULAR[*i].clone();
                                         let scaler = multiply_corresponding_nonzero(multiply_corresponding_nonzero(scaler, Vec3D::new(f_dir.x as f32, f_dir.y as f32, f_dir.z as f32) * u_s), Vec3D::new(s_dir.x as f32, s_dir.y as f32, s_dir.z as f32) * v_s);
 
                                         let start_index = lod.x.len();
                                         let indices = TRIS_INDICES_UVS.1;
                                         let uvs = TRIS_INDICES_UVS.2;
-                                        let mut points = TRIS_INDICES_UVS.0[i];
+                                        let mut points = TRIS_INDICES_UVS.0[*i];
                                         points = points * scaler + (Vec3D::new(x as f32, y as f32, z as f32)) + ((Vec3Df::all_ones() * 0.5).component_product(&scaler) - Vec3Df::all_ones() * 0.5);
                                         lod.add_points(&points);
                                         lod.triangles.add_triangle(
@@ -904,7 +934,7 @@ impl<V:Voxel, G:Generator<V>> GameMap<V, G> {
         }
         self.rendering_up_to_date = !must_re_render;
     }
-    pub fn generate_chunk<F:FnMut(Vec3D<i32>) -> V>(&mut self, chunk_pos:WorldChunkPos, func:&mut F) {
+    pub fn generate_chunk<F:FnMut(Vec3D<i32>) -> V>(&self, chunk_pos:WorldChunkPos, func:&mut F) -> MapChunk<V> {
         let mut chunk_data = Vec::with_capacity(self.dims.chunk_slice_area * self.dims.chunk_height);
         let mut orig_worldpos = Vec3D::new(chunk_pos.x * self.dims.chunk_length_i, chunk_pos.y * self.dims.chunk_width_i, chunk_pos.z * self.dims.chunk_height_i);
         for z in orig_worldpos.z..orig_worldpos.z + self.dims.chunk_height_i {
@@ -914,7 +944,8 @@ impl<V:Voxel, G:Generator<V>> GameMap<V, G> {
                 }
             }
         }
-        self.chunks.insert(chunk_pos, MapChunk::new(orig_worldpos, chunk_pos, chunk_data));
+        let chunk = MapChunk::new(orig_worldpos, chunk_pos, chunk_data);
+        chunk
     }
     pub fn get_all_chunk_pos(&self) -> Vec<Vec3D<i32>> {
         self.chunks.clone().keys().map(|vector| {vector.clone()}).collect::<Vec<Vec3D<i32>>>()
@@ -924,10 +955,21 @@ impl<V:Voxel, G:Generator<V>> GameMap<V, G> {
         for xc in start.x..end.x {
             for yc in start.y..end.y {
                 for zc in start.z..end.z {
-                    self.generate_chunk(Vec3D::new(xc, yc, zc), func);
+                    self.chunks.insert(Vec3D::new(xc, yc, zc), self.generate_chunk(Vec3D::new(xc, yc, zc), func));
                 }
             }
         }
+    }
+    pub fn generate_chunks_with_generator_and_get_them(&mut self, chunks:Vec<WorldChunkPos>) -> Vec<(WorldChunkPos, MapChunk<V>)> {
+        let mut out = Vec::with_capacity(chunks.len());
+        for c_pos in chunks {
+            let chunk = self.generate_chunk(c_pos, &mut |pos| {
+                self.generator.generate(pos)
+            });
+            self.chunks.insert(c_pos, chunk.clone());
+            out.push((c_pos, chunk));
+        }
+        out
     }
     pub fn make_meshes_invisible<'a>(&mut self, write: &mut VectorinatorWrite<'a>) {
         write.meshes.change_visibility_of_all_instances_of_vec(self.mesh_vec, false);
@@ -977,6 +1019,13 @@ impl<V:Voxel, G:Generator<V>> GameMap<V, G> {
             self.dims.chunk_length_i,
             self.dims.chunk_width_i,
             self.dims.chunk_height_i,
+        )
+    }
+    pub fn get_chunk_dims_vector_f(&self) -> Vec3D<f32> {
+        Vec3D::new(
+            self.dims.chunk_length_i as f32,
+            self.dims.chunk_width_i as f32,
+            self.dims.chunk_height_i as f32,
         )
     }
     pub fn is_voxel_solid(&self, voxel:WorldVoxelPos) -> bool {
