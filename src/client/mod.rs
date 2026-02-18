@@ -55,7 +55,6 @@ pub fn client_func() {
     }
     );
     let mut world_clone = world.clone();
-    let mut spare_world = world.clone();
     if false {
         world_clone.change_mesh_vec(10);
         world_clone.set_min_light_levels((50,50,50));
@@ -77,49 +76,12 @@ pub fn client_func() {
 
         writer.new_sct(StaticGameEntity{planner:StaticPlanner{},director:StaticDirector {kind:DirectorKind::Nothing},actions:StaticGameActions {base_actions:Vec::with_capacity(8)},movement:StaticMovement{}, mesh_info:StaticMeshInfo{mesh_id:MeshID::Named("GREY_MESH".to_string()),mesh_data:grey_sphere_mesh()}, stats:StaticStats{}, collider:StaticCollider{init_aabb:AABB::new(-Vec3D::all_ones()*0.5, Vec3D::all_ones()*0.5)}});
 
-
-        let test_goals = vec![
-            //format!("Build a vertical staircase and get on top of it"),
-            //format!("Create a square structure on flat ground near you."),
-            vec![
-                format!("Meet up with all other agents in one place by agreeing on a place and moving there."),
-                format!("Build a large wall with other agents.")
-            ],
-            /*vec![
-                format!("Build a 5x5 flat square platform"),
-            ],*/
-            /*vec![
-                format!("Make a 3x3 square hole that is 4 voxels deep next to you without falling into it")
-            ]*/
-            /*vec![
-                format!("Find another agent, move towards them and dig a hole beneath them.")
-            ],*/
-            /*vec![
-                format!("Create a house with 4 walls and a ceiling. The house must have at least a 3x3 empty space inside.")
-            ],*/
-            /*vec![
-                format!("Create a staircase reaching at least 10 voxels tall (on the z axis) from your position. Keep in mind that a staircase is diagonal."),
-                format!("Get on top of the staircase you created")
-            ]*/
-            /*vec![
-                format!("Meet up with other agents and build a house together with enough space inside to fit everyone")
-            ]*/
-            //format!("Build a house with 4 walls, an entrance and a roof"),
-            /*vec![
-                format!("Find someone else in this world, and move to them. They may be far away.")
-            ]*/
-        ];
-
         for i in 0..1 {
             let pos = Vec3D::new((fastrand::f32() - 0.5) * 2.0 * 150.0, (fastrand::f32() - 0.5) * 2.0 * 150.0, 150.0);
-            writer.new_ent(NewGameEntity::new(Movement{against_wall:false, touching_ground:false,pos:pos, speed:Vec3D::zero(), orient:Orientation::zero(), rotat:Rotation::from_orientation(Orientation::zero())}, Stats {static_type_id:1, health:0, damage:0, stamina:0, ground_speed:0.2, jump_height:1.0, personal_vehicle:None}, Collider{team:0, collider:AABB::new(pos - Vec3D::all_ones() * 0.5, pos + Vec3D::all_ones() * 0.5)}, Director::new_with_random_name(DirectorKind::LLM(LLMDirector::new_with_goals(fastrand::choice(test_goals.iter()).unwrap().clone()))), MustSync::No, None));
+            writer.new_ent(NewGameEntity::new(Movement{against_wall:false, touching_ground:false,pos:pos, speed:Vec3D::zero(), orient:Orientation::zero(), rotat:Rotation::from_orientation(Orientation::zero())}, Stats {static_type_id:1, health:0, damage:0, stamina:0, ground_speed:0.2, jump_height:1.0, personal_vehicle:None}, Collider{team:0, collider:AABB::new(pos - Vec3D::all_ones() * 0.5, pos + Vec3D::all_ones() * 0.5)}, Director::new_with_random_name(DirectorKind::Nothing), MustSync::No, None));
             //writer.new_ent(NewGameEntity::new(Movement{against_wall:false, touching_ground:false,pos:pos, speed:Vec3D::zero(), orient:Orientation::zero(), rotat:Rotation::from_orientation(Orientation::zero())}, Stats {static_type_id:1, health:0, damage:0, stamina:0, ground_speed:0.2, jump_height:1.0}, Collider{team:0, collider:AABB::new(pos - Vec3D::all_ones() * 0.5, pos + Vec3D::all_ones() * 0.5)}, Director::new_with_random_name(DirectorKind::LLM(LLMDirector::new_with_goals(test_goals[i].clone())))));
         }
 
-        let positions = get_positions_of_air_written_text("Hord3".to_string(), Metrics::new(100.0, 80.0), "don't_care".to_string(), 1000, 1000, Color(rgb_to_argb((255,255,255))), (0,0), Vec3D::new(0.0, -1.0, 0.0), Vec3D::new(0.01, 0.0, -1.0), Vec3D::new(-155.0, 155.0, 180.0));
-        for pos in positions {
-            //writer.new_ent(NewGameEntity::new(Movement{pos:pos, speed:Vec3D::new(1.0, 0.0, 0.0), orient:Orientation::zero(), rotat:Rotation::from_orientation(Orientation::zero())}, Stats {static_type_id:8, health:0, damage:0, stamina:0}, Collider{team:0, collider:AABB::new(pos - Vec3D::all_ones() * 0.5, pos + Vec3D::all_ones() * 0.5)}));
-        }
     }
 
     let (payload_sender, response_receiver) = match ProximaLink::initialize(String::from("HORDE"), String::from("HORDE"), String::from("http://localhost:8085")) {
@@ -169,7 +131,6 @@ pub fn client_func() {
     let outside_events = windowing.get_outside_events();
     let (mut simpleui, user_events) = SimpleUI::<GameUserEvent>::new(20, 20, framebuf.clone(), mouse, channel().1);
 
-    // TRES IMPORTANTTTTTTTTTTTTT
     simpleui.add_many_connected_elements(get_list_choice(vec!["TerrainModifier".to_string(), "TileChooser".to_string(), "TerrainZoneModifier".to_string(), "LightSpreader".to_string()], UIVector::new(UIUnit::ParentWidthProportion(0.9), UIUnit::ParentHeightProportion(0.3)), UIDimensions::Decided(UIVector::new(UIUnit::ParentWidthProportion(0.1), UIUnit::ParentHeightProportion(0.3))), "Tools".to_string(), "rien".to_string()));
     
     {
@@ -366,8 +327,6 @@ pub fn client_func() {
         SequencedTask::StartTask(ClientTask::RenderEverything),
         SequencedTask::StartTask(ClientTask::DoAllUIRead),
         SequencedTask::StartTask(ClientTask::DoEventsAndMouse),
-        //SequencedTask::StartTask(ClientTask::ResetCounters),
-        //SequencedTask::WaitFor(ClientTask::ResetCounters),
         
         SequencedTask::WaitFor(ClientTask::DoAllUIRead),
         SequencedTask::StartTask(ClientTask::DoAllUIWrite),
@@ -415,22 +374,12 @@ pub fn client_func() {
     let mut prev_night_status = false;
     let tickrate_f = tickrate.unwrap() as f64;
     let mut need_tick = true;
-    // let mut cutscene = get_real_demo_cutscene(&viewport_data);
     for i in 0..75000 {
         println!("{i}");
 
         let mut start = Instant::now();
         input_handler.update_keyboard();
         let (new_fog_col, new_normal_vec, new_night_state) = day_night.get_next_color();
-        //if prev_night_status != new_night_state {
-        //    let mut writer = vectorinator.get_write();
-        //    spare_world = world_handler.world.read().unwrap().clone();
-        //    spare_world.make_meshes_invisible(&mut writer);
-        //    world_clone.make_meshes_visible(&mut writer);
-        //    world_clone.set_grid = spare_world.set_grid.clone();
-        //    *world_handler.world.write().unwrap() = world_clone.clone();
-        //}
-        //prev_night_status = new_night_state;
         let new_camera = {
             let mut writer = vectorinator.get_write();
             //vectorinator.shader_data.do_normals.store(!new_night_state, Ordering::Relaxed);
@@ -440,22 +389,8 @@ pub fn client_func() {
             let tick = engine.extra_data.tick.fetch_add(1, Ordering::Relaxed);
             let new_camera = input_handler.get_new_camera(&read, tick);
             *writer.camera = new_camera.clone();//(i as f32 / 500.0) * PI/2.0));
-            /*if i > 400 {
-                let mut reader = engine.entity_1.get_read();
-
-                let ent = fastrand::usize(0..reader.actions.len());
-                let pos = Vec3D::new((fastrand::f32() - 0.5) * 2.0 * 150.0, (fastrand::f32() - 0.5) * 2.0 * 150.0, 50.0);
-                let voxel_pos = get_voxel_pos(pos);
-                let target_pos = engine.world.world.read().unwrap().get_ceiling_at(voxel_pos, 100) + Vec3D::new(0, 0, 1);
-                let mut counter = reader.actions[ent].get_counter().clone();
-                let next_action = counter.get_next_id();
-                reader.tunnels.actions_out.send(GameEntityEvent::new(true,ActionsEvent::new(ent, None, ActionsUpdate::AddAction(Action::new(next_action, engine.extra_data.tick.load(Ordering::Relaxed), ActionTimer::Delay(500), ActionKind::PathToPosition(Vec3Df::new(target_pos.x as f32, target_pos.y as f32, target_pos.z as f32), 0.7), ActionSource::Director)))));
-                reader.tunnels.actions_out.send(GameEntityEvent::new(true,ActionsEvent::new(ent, None, ActionsUpdate::UpdateCounter(counter))));
-            }*/
-            // dbg!(new_camera.clone());
             engine.extra_data.current_render_data.write().unwrap().0 = new_camera.clone();
 
-            /*thread::sleep(Duration::from_millis(10));*/
             new_camera
         };
         {

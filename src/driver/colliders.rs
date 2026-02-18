@@ -341,6 +341,12 @@ impl BoundingCollider {
             Self::BS(sphere) => sphere.point_inside(point)
         }
     }
+    pub fn rotate_around_origin(&self, rotation:&Rotation) -> Self {
+        match self {
+            Self::AABB(aabb) => Self::AABB(aabb.rotate(rotation)),
+            Self::BS(bs) => Self::BS(BoundingSphere { center: rotation.rotate(bs.center), radius: bs.radius })
+        }
+    }
 }
 
 #[derive(Clone, ToBytes, FromBytes, PartialEq)]

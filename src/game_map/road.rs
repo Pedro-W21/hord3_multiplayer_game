@@ -41,7 +41,7 @@ impl Generator<CoolVoxel> for Road {
 impl Road {
     pub fn new(start:WorldChunkPos, start_dir:Vec3Df) -> Self {
         let perp = start_dir.cross(&Vec3D::new(0.0, 0.0, 1.0));
-        let current_head_c = get_float_pos(start) + Vec3Df::new(0.5, 0.5, 0.5);
+        let current_head_c = get_float_pos(start) + Vec3Df::new(0.5, 0.5, 0.25);
         Self { start, current_head_c, current_direction_c: start_dir, head_dir_plane: VectorPlane::new(perp, start_dir, current_head_c).to_equation_plane(), center_road_plane:EquationPlane::new(Vec3Df::all_ones(), 0.0) }
     }
     pub fn get_chunks_to_generate(&self, steps:f32, world:&GameMap<CoolVoxel, Self>) -> Vec<WorldChunkPos> {

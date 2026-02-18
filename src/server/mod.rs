@@ -1,7 +1,7 @@
 
 use std::{collections::HashMap, f32::consts::PI, net::Ipv4Addr, path::PathBuf, simd::Simd, sync::{atomic::{AtomicUsize, Ordering}, mpmc::{self, channel}, Arc, RwLock}, thread, time::{Duration, Instant}};
 
-use crate::{driver::{colliders::AABB, stats::{StaticStats, Stats}}, game_map::{GameMapEvent, road::Road}, server::server_tasks::GameUserEvent, vehicle::{NewVehicleEntity, VehicleEntityVec, default_vehicles::default_car::get_default_car_type, position::VehiclePosition, vehicle_stats::VehicleStats}};
+use crate::{driver::{colliders::AABB, stats::{StaticStats, Stats}}, game_map::{GameMapEvent, WorldChunkPos, road::Road}, server::server_tasks::GameUserEvent, vehicle::{NewVehicleEntity, VehicleEntityVec, default_vehicles::default_car::get_default_car_type, position::VehiclePosition, vehicle_stats::VehicleStats}};
 use cosmic_text::{Color, Font, Metrics};
 use crate::cutscene::{camera_movement::{CameraMovement, CameraMovementDuration, CameraMovementElement, CameraSequence}, demo_cutscene::{get_demo_cutscene, get_empty_cutscene}, game_shader::GameShader, real_demo_cutscene::get_real_demo_cutscene, write_in_the_air::get_positions_of_air_written_text, written_texture::get_written_texture_buffer};
 use crate::day_night::DayNight;
@@ -21,8 +21,8 @@ use crate::{driver::{actions::{Action, ActionKind, ActionSource, ActionTimer, Ac
 pub mod server_tasks;
 
 pub fn server_func() {
-    const TICKRATE:usize = 30;
-    let mut world = GameMap::new(100, ChunkDims::new(8, 8, 8), get_tile_voxels(), (255,255,255), 1, Road::new(Vec3D::zero(), Vec3Df::new(1.0, 0.0, 0.0)));
+    const TICKRATE:usize = 45;
+    let mut world = GameMap::new(100, ChunkDims::new(8, 8, 8), get_tile_voxels(), (255,255,255), 1, Road::new(WorldChunkPos::new(0,0,1), Vec3Df::new(1.0, 0.0, 0.0)));
     let mut perlin = Perlin::new().set_seed(13095);
     let mut world_height = 15.0;
     let mut water_level = 10.0;
@@ -42,7 +42,7 @@ pub fn server_func() {
                 if let Some(val) =  ground_at.get(ground_pos) && *val < pos.z {
                     ground_at[ground_pos] = water_level as i32;
                 }
-                CoolVoxel {voxel_type:7, orient:0, light:VoxelLight::random_light()}
+                CoolVoxel {voxel_type:6, orient:0, light:VoxelLight::random_light()}
             }
             else {
                 if let Some(val) =  ground_at.get(ground_pos) && *val < pos.z {
@@ -77,48 +77,10 @@ pub fn server_func() {
 
         writer.new_sct(StaticGameEntity{planner:StaticPlanner{},director:StaticDirector {kind:DirectorKind::Nothing},actions:StaticGameActions {base_actions:Vec::with_capacity(8)},movement:StaticMovement{}, mesh_info:StaticMeshInfo{mesh_id:MeshID::Named("GREY_MESH".to_string()),mesh_data:grey_sphere_mesh()}, stats:StaticStats{}, collider:StaticCollider{init_aabb:AABB::new(-Vec3D::all_ones()*0.5, Vec3D::all_ones()*0.5)}});
 
-
-        let test_goals = vec![
-            //format!("Build a vertical staircase and get on top of it"),
-            //format!("Create a square structure on flat ground near you."),
-            vec![
-                format!("Meet up with all other agents in one place by agreeing on a place and moving there."),
-                format!("Build a large wall with other agents.")
-            ],
-            /*vec![
-                format!("Build a 5x5 flat square platform"),
-            ],*/
-            /*vec![
-                format!("Make a 3x3 square hole that is 4 voxels deep next to you without falling into it")
-            ]*/
-            /*vec![
-                format!("Find another agent, move towards them and dig a hole beneath them.")
-            ],*/
-            /*vec![
-                format!("Create a house with 4 walls and a ceiling. The house must have at least a 3x3 empty space inside.")
-            ],*/
-            /*vec![
-                format!("Create a staircase reaching at least 10 voxels tall (on the z axis) from your position. Keep in mind that a staircase is diagonal."),
-                format!("Get on top of the staircase you created")
-            ]*/
-            /*vec![
-                format!("Meet up with other agents and build a house together with enough space inside to fit everyone")
-            ]*/
-            //format!("Build a house with 4 walls, an entrance and a roof"),
-            /*vec![
-                format!("Find someone else in this world, and move to them. They may be far away.")
-            ]*/
-        ];
-
         for i in 0..1 {
             let pos = Vec3D::new((fastrand::f32() - 0.5) * 2.0 * 50.0, (fastrand::f32() - 0.5) * 2.0 * 50.0, 30.0);
-            writer.new_ent(NewGameEntity::new(Movement{against_wall:false, touching_ground:false,pos:pos, speed:Vec3D::zero(), orient:Orientation::zero(), rotat:Rotation::from_orientation(Orientation::zero())}, Stats {static_type_id:1, health:0, damage:0, stamina:0, ground_speed:0.2, jump_height:1.0, personal_vehicle:Some(0)}, Collider{team:0, collider:AABB::new(pos - Vec3D::all_ones() * 0.5, pos + Vec3D::all_ones() * 0.5)}, Director::new_with_random_name(DirectorKind::LLM(LLMDirector::new_with_goals(fastrand::choice(test_goals.iter()).unwrap().clone()))), MustSync::Server, None));
+            writer.new_ent(NewGameEntity::new(Movement{against_wall:false, touching_ground:false,pos:pos, speed:Vec3D::zero(), orient:Orientation::zero(), rotat:Rotation::from_orientation(Orientation::zero())}, Stats {static_type_id:1, health:0, damage:0, stamina:0, ground_speed:0.2, jump_height:1.0, personal_vehicle:Some(0)}, Collider{team:0, collider:AABB::new(pos - Vec3D::all_ones() * 0.5, pos + Vec3D::all_ones() * 0.5)}, Director::new_with_random_name(DirectorKind::Nothing), MustSync::Server, None));
             //writer.new_ent(NewGameEntity::new(Movement{against_wall:false, touching_ground:false,pos:pos, speed:Vec3D::zero(), orient:Orientation::zero(), rotat:Rotation::from_orientation(Orientation::zero())}, Stats {static_type_id:1, health:0, damage:0, stamina:0, ground_speed:0.2, jump_height:1.0}, Collider{team:0, collider:AABB::new(pos - Vec3D::all_ones() * 0.5, pos + Vec3D::all_ones() * 0.5)}, Director::new_with_random_name(DirectorKind::LLM(LLMDirector::new_with_goals(test_goals[i].clone())))));
-        }
-
-        let positions = get_positions_of_air_written_text("Hord3".to_string(), Metrics::new(100.0, 80.0), "don't_care".to_string(), 1000, 1000, Color(rgb_to_argb((255,255,255))), (0,0), Vec3D::new(0.0, -1.0, 0.0), Vec3D::new(0.01, 0.0, -1.0), Vec3D::new(-155.0, 155.0, 180.0));
-        for pos in positions {
-            //writer.new_ent(NewGameEntity::new(Movement{pos:pos, speed:Vec3D::new(1.0, 0.0, 0.0), orient:Orientation::zero(), rotat:Rotation::from_orientation(Orientation::zero())}, Stats {static_type_id:8, health:0, damage:0, stamina:0}, Collider{team:0, collider:AABB::new(pos - Vec3D::all_ones() * 0.5, pos + Vec3D::all_ones() * 0.5)}));
         }
     }
 
@@ -132,7 +94,7 @@ pub fn server_func() {
         let mut writer = entity_vec_2.get_write();
         writer.new_sct(get_default_car_type());
 
-        writer.new_ent(NewVehicleEntity::new(VehiclePosition::new().with_pos(Vec3Df::new(0.0, 0.0, 35.0)), VehicleStats {static_id:0, nitro_left:100.0, mass:10.0},  MustSync::Server, None));
+        writer.new_ent(NewVehicleEntity::new(VehiclePosition::new().with_pos(Vec3Df::new(0.0, 0.0, 10.5)), VehicleStats {static_id:0, nitro_left:100.0, mass:10.0},  MustSync::Server, None));
     }
     let windowing = WindowingHandler::new::<MiniFBWindow>(HordeWindowDimensions::new(1280, 720), HordeColorFormat::ARGB8888);
     let framebuf = windowing.get_outside_framebuf();
@@ -162,129 +124,10 @@ pub fn server_func() {
         
     );
     waves_handler.send_gec(engine.clone());
-    let mouse = windowing.get_mouse_state();
-    let mouse2 = windowing.get_mouse_state();
 
-    let outside_events = windowing.get_outside_events();
-
-    // TRES IMPORTANTTTTTTTTTTTTT
-    {
-        println!("START TEXTURE");
-        let mut writer = vectorinator.get_write();
-        writer.textures.add_set_with_many_textures(
-            "Testing_Texture".to_string(),
-            vec![
-                (
-                    "neige.png".to_string(),
-                    1,
-                    None
-                ),
-            ]
-        );
-        writer.textures.add_set_with_many_textures(
-            "Testing_Texture_2".to_string(),
-            vec![
-                (
-                    "sable.png".to_string(),
-                    1,
-                    None
-                ),
-            ]
-        );
-        writer.textures.add_set_with_many_textures(
-            "Testing_Texture_3".to_string(),
-            vec![
-                (
-                    "terre_herbe.png".to_string(),
-                    1,
-                    None
-                )
-            ]
-        );
-        writer.textures.add_set_with_many_textures(
-            "Testing_Texture_4".to_string(),
-            vec![
-                (
-                    "terre_cail.png".to_string(),
-                    1,
-                    None
-                )
-            ]
-        );
-        writer.textures.add_set_with_many_textures(
-            "Testing_Texture_5".to_string(),
-            vec![
-                (
-                    "terre.png".to_string(),
-                    1,
-                    None
-                )
-            ]
-        );
-        writer.textures.add_set_with_many_textures(
-            "Testing_Texture_6".to_string(),
-            vec![
-                (
-                    "roche.png".to_string(),
-                    1,
-                    None
-                )
-            ]
-        );
-        writer.textures.add_set_with_many_textures(
-            "Testing_Texture_7".to_string(),
-            vec![
-                (
-                    "eau.png".to_string(),
-                    1,
-                    None
-                )
-            ]
-        );
-        writer.textures.add_set_with_many_textures(
-            "Testing_Texture_8".to_string(),
-            vec![
-                (
-                    "eau_prof.png".to_string(),
-                    1,
-                    None
-                )
-            ]
-        );
-        writer.textures.add_set_with_many_textures(
-            "Testing_Texture_8".to_string(),
-            vec![
-                (
-                    "metal_0.png".to_string(),
-                    1,
-                    None
-                )
-            ]
-        );
-        writer.textures.add_generated_texture_set("Testing_text_texture".to_string(), get_written_texture_buffer("TEST\nLOL".to_string(), Metrics::new(300.0, 310.0), "don't_care".to_string(), vec![rgb_to_argb((0,200,0)) ; 1000*1000], 1000, 1000, Color(rgb_to_argb((255,255,255))), (0,0)), 1000, 1000);
-        writer.textures.add_generated_texture_set("FULLRED".to_string(), get_written_texture_buffer("".to_string(), Metrics::new(300.0, 310.0), "don't_care".to_string(), vec![rgb_to_argb((255,0,0)) ; 1000*1000], 1000, 1000, Color(rgb_to_argb((255,255,255))), (0,0)), 1000, 1000);
-        writer.textures.add_generated_texture_set("FULLGREEN".to_string(), get_written_texture_buffer("".to_string(), Metrics::new(300.0, 310.0), "don't_care".to_string(), vec![rgb_to_argb((0,255,0)) ; 1000*1000], 1000, 1000, Color(rgb_to_argb((255,255,255))), (0,0)), 1000, 1000);
-        writer.textures.add_generated_texture_set("FULLBLUE".to_string(), get_written_texture_buffer("".to_string(), Metrics::new(300.0, 310.0), "don't_care".to_string(), vec![rgb_to_argb((0,0,255)) ; 1000*1000], 1000, 1000, Color(rgb_to_argb((255,255,255))), (0,0)), 1000, 1000);
-        writer.textures.add_generated_texture_set("FULLWHITE".to_string(), get_written_texture_buffer("".to_string(), Metrics::new(300.0, 310.0), "don't_care".to_string(), vec![rgb_to_argb((255,255,255)) ; 1000*1000], 1000, 1000, Color(rgb_to_argb((255,255,255))), (0,0)), 1000, 1000);
-        let text_herbe = writer.textures.get_text_with_id(match writer.textures.get_id_with_name(&"Testing_Texture_3".to_string()).unwrap() {TextureSetID::ID(id) => id, _ => panic!()});
-        let mut datas = Vec::with_capacity(200);
-        for i in 0..200 {
-            let mut new_data = text_herbe.get_mip_map(0).data.clone();
-            let len = new_data.len();
-            for j in 1..(text_herbe.get_mip_map(0).largeur_usize.pow(2) - (i* text_herbe.get_mip_map(0).largeur_usize.pow(2))/200) {
-                new_data[len - j] = 0
-            }
-            datas.push(new_data);
-        }
-        writer.textures.add_generated_texture_multiset("RASTERSHOW".to_string(), datas, 16, 16, 1, Some((0,0,0)));
-        writer.textures.add_generated_texture_set("FULLPINK".to_string(), get_written_texture_buffer("".to_string(), Metrics::new(300.0, 310.0), "don't_care".to_string(), vec![rgb_to_argb((255,0,255)) ; 1000*1000], 1000, 1000, Color(rgb_to_argb((255,255,255))), (0,0)), 1000, 1000);
-        
-        println!("DONE TEXTURE");
-    }
     let handler = ServerTaskTaskHandler::new(engine.clone(), windowing);
     
     let queue = HordeTaskQueue::new(vec![HordeTaskSequence::new(vec![
-        SequencedTask::StartSequence(1),
         SequencedTask::StartTask(ServerTask::ApplyEvents),
         SequencedTask::WaitFor(ServerTask::ApplyEvents),
         SequencedTask::StartTask(ServerTask::Main),
@@ -304,57 +147,15 @@ pub fn server_func() {
         SequencedTask::StartTask(ServerTask::MultiThirdPart),
         SequencedTask::WaitFor(ServerTask::MultiThirdPart),
         ]
-    ),
-    HordeTaskSequence::new(vec![
-
-        SequencedTask::StartTask(ServerTask::SendFramebuf),
-        SequencedTask::WaitFor(ServerTask::SendFramebuf),
-        SequencedTask::StartTask(ServerTask::WaitForPresent),
-        SequencedTask::WaitFor(ServerTask::WaitForPresent),
-    ])], Vec::new());
+    )], Vec::new());
     println!("Hello, world!");
     let mut scheduler = HordeScheduler::new(queue.clone(), handler, 16);
-    let mut day_night = DayNight::new(
-        (148,236,255),
-        (238,175,97),
-        (19,24,98),
-        
-        Vec3Df::new(0.0, 1.0, -1.0),
-        Vec3Df::new(0.0, 1.0, 0.0),
-        Vec3Df::new(0.0, -1.0, 1.0),
-
-        475
-    );
-    let mut prev_night_status = false;
-    // let mut cutscene = get_real_demo_cutscene(&viewport_data);
+    
     for i in 0..75000 {
-        //println!("{i}");
+        println!("----------------- NEW TICK {i} ----------------");
 
         let mut start = Instant::now();
-        let (new_fog_col, new_normal_vec, new_night_state) = day_night.get_next_color();
-        //if prev_night_status != new_night_state {
-        //    let mut writer = vectorinator.get_write();
-        //    spare_world = world_handler.world.read().unwrap().clone();
-        //    spare_world.make_meshes_invisible(&mut writer);
-        //    world_clone.make_meshes_visible(&mut writer);
-        //    world_clone.set_grid = spare_world.set_grid.clone();
-        //    *world_handler.world.write().unwrap() = world_clone.clone();
-        //}
-        //prev_night_status = new_night_state;
         let new_camera = {
-
-            /* if i > 400 {
-                let mut reader = engine.entity_1.get_read();
-
-                let ent = fastrand::usize(0..reader.actions.len());
-                let pos = Vec3D::new((fastrand::f32() - 0.5) * 2.0 * 150.0, (fastrand::f32() - 0.5) * 2.0 * 150.0, 50.0);
-                let voxel_pos = get_voxel_pos(pos);
-                let target_pos = engine.world.world.read().unwrap().get_ceiling_at(voxel_pos, 100) + Vec3D::new(0, 0, 1);
-                let mut counter = reader.actions[ent].get_counter().clone();
-                let next_action = counter.get_next_id();
-                reader.tunnels.actions_out.send(GameEntityEvent::new(true,ActionsEvent::new(ent, None, ActionsUpdate::AddAction(Action::new(next_action, engine.extra_data.tick.load(Ordering::Relaxed), ActionTimer::Delay(500), ActionKind::PathToPosition(Vec3Df::new(target_pos.x as f32, target_pos.y as f32, target_pos.z as f32), 0.7), ActionSource::Director)))));
-                reader.tunnels.actions_out.send(GameEntityEvent::new(true,ActionsEvent::new(ent, None, ActionsUpdate::UpdateCounter(counter))));
-            }*/
             if i < 100 {
                 let mut world_write = engine.world.world.write().unwrap();
                 let dims = world_write.get_chunk_dims_vector_f();

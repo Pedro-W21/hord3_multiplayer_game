@@ -2,7 +2,7 @@ use std::{f32::consts::PI, io::{self, Read}, sync::Arc};
 
 use hord3::{defaults::default_rendering::vectorinator_binned::meshes::{Mesh, MeshID, MeshLODS, MeshLODType}, horde::geometry::{rotation::Orientation, vec3d::{Coord, Vec3Df}}};
 
-use crate::{driver::colliders::{AABB, BoundingCollider, BoundingSphere, ComplexCollider, InternalCollider, SubCollider}, game_3d_models::simple_prism, game_engine::CoolGameEngineTID, vehicle::{StaticVehicleEntity, hull::{Hull, StaticHull}, locomotion::{ActivationOutput, ActivationRequirement, ActivationRequirements, ApplicationPoint, DriverAction, EqMotion, EqMotionKind, EqRecoil, EqRecoilKind, StaticLocomotion, StaticLocomotionEquipment, SurfaceType}, mesh_info::StaticVMeshInfo, position::StaticVehiclePos, vehicle_stats::StaticVehicleStats}};
+use crate::{driver::colliders::{AABB, BoundingCollider, BoundingSphere, ComplexCollider, InternalCollider, SubCollider}, game_3d_models::simple_prism, game_engine::CoolGameEngineTID, vehicle::{StaticVehicleEntity, hull::{Hull, StaticHull}, locomotion::{ActivationOutput, ActivationRequirement, ActivationRequirements, ApplicationPoint, DriverAction, EqMotion, EqMotionKind, EqRecoil, EqRecoilKind, MotionApplication, StaticLocomotion, StaticLocomotionEquipment, SurfaceType}, mesh_info::StaticVMeshInfo, position::StaticVehiclePos, vehicle_stats::StaticVehicleStats}};
 
 pub fn get_default_car_type() -> StaticVehicleEntity<CoolGameEngineTID> {
     let aabb = AABB::new(
@@ -80,7 +80,8 @@ fn get_default_loco_equips(aabb:AABB) -> Vec<StaticLocomotionEquipment> {
         max_self_rotation:Orientation::new(PI/3.0, 0.0, 0.0),
         motion:EqMotion {
             kind:EqMotionKind::Switch,
-            equipment_local_motion_vector:Vec3Df::new(1.0, 0.0, 0.0),
+            forward_vector:Vec3Df::new(1.0, 0.0, 0.0),
+            motion_application:MotionApplication::FlatAlong2AxisFromEquipment { removed: Coord::Z },
             application_point:ApplicationPoint::CenterOfEquipment,   
         },
         recoil:EqRecoil {
@@ -90,7 +91,8 @@ fn get_default_loco_equips(aabb:AABB) -> Vec<StaticLocomotionEquipment> {
             max_recoil:1.0
         },
         collider:BoundingCollider::BS(BoundingSphere::new(aabb.get_ground_vertices()[0], 0.5)),
-        down_dir:Vec3Df::new(0.0, 0.0, -1.0)
+        down_dir:None,
+        is_ground_equipment:Some(SurfaceType::Ground)
     };
     let mut equipments = Vec::with_capacity(4);
     let turning_wheels = [1, 2];
@@ -99,8 +101,9 @@ fn get_default_loco_equips(aabb:AABB) -> Vec<StaticLocomotionEquipment> {
         eq_clone.resting_local_position = aabb.get_ground_vertices()[i];
         if !turning_wheels.contains(&i) {
             eq_clone.activation_requirements.remove(1);
+            eq_clone.activation_requirements.remove(0);
         }
-        eq_clone.collider = BoundingCollider::BS(BoundingSphere::new(aabb.get_ground_vertices()[i], 0.5));
+        eq_clone.collider = BoundingCollider::BS(BoundingSphere::new(aabb.get_ground_vertices()[i], 0.35));
         equipments.push(eq_clone);
     }
     equipments

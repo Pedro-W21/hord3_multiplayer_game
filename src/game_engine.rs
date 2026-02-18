@@ -1,7 +1,7 @@
 use std::{collections::HashMap, path::PathBuf, sync::{atomic::{AtomicUsize, Ordering}, mpmc::{Sender}, Arc, RwLock}};
 
 use engine_derive::GameEngine;
-use hord3::{defaults::default_rendering::vectorinator_binned::{Vectorinator, rendering_spaces::ViewportData, shaders::NoOpShader}, horde::{game_engine::{engine::{GameEngine, MovingObjectID}, entity::{Entity, EntityVec, MultiplayerEntity, Renderable, SimpleComponentEvent}, multiplayer::{GlobalComponent, GlobalEvent, HordeEventReport, HordeMultiModeChoice, HordeMultiplayer, HordeMultiplayerMode, Identify, MultiplayerEngine, MustSync}, static_type_id::HasStaticTypeID, world::{World, WorldComputeHandler, WorldEvent, WorldHandler, WorldOutHandler, WorldWriteHandler}}, geometry::{rotation::Orientation, vec3d::{Vec3D, Vec3Df}}, rendering::camera::Camera, scheduler::IndividualTask, sound::{ARWWaves, WavesHandler}}};
+use hord3::{defaults::default_rendering::vectorinator_binned::{Vectorinator, rendering_spaces::ViewportData, shaders::NoOpShader}, horde::{game_engine::{engine::{GameEngine, MovingObjectID}, entity::{Entity, EntityVec, MultiplayerEntity, Renderable, SimpleComponentEvent}, multiplayer::{GlobalComponent, GlobalEvent, HordeEventReport, HordeMultiModeChoice, HordeMultiplayer, HordeMultiplayerMode, Identify, MultiplayerEngine, MustSync}, static_type_id::HasStaticTypeID, world::{World, WorldComputeHandler, WorldEvent, WorldHandler, WorldOutHandler, WorldWriteHandler}}, geometry::{rotation::{Orientation, Rotation}, vec3d::{Vec3D, Vec3Df}}, rendering::camera::Camera, scheduler::IndividualTask, sound::{ARWWaves, WavesHandler}}};
 use to_from_bytes_derive::{FromBytes, ToBytes};
 
 use crate::{cutscene::{game_shader::GameShader, reverse_camera_coords::reverse_from_raster_to_worldpos}, driver::{Collider, ColliderEvent, ColliderEventVariant, GameEntity, GameEntityEvent, GameEntityVecRead, GameEntityVecWrite, MovementEvent, MovementEventVariant, actions::{Action, ActionKind, ActionSource, ActionTimer, ActionsEvent, ActionsUpdate}, colliders::AABB}, game_map::{GameMap, GameMapEvent, Voxel, VoxelLight, VoxelModel, VoxelType, get_voxel_pos, road::Road}, proxima_link::HordeProximaAIRequest, vehicle::{VehicleEntity, VehicleEntityEvent, VehicleEntityVecRead, VehicleEntityVecWrite, hull::HullUpdate, locomotion::SurfaceType, position::{VehiclePosEvent, VehiclePosUpdate}}};
@@ -206,9 +206,9 @@ fn get_push_to_next_integer_coords_in_dir_with_world(start:Vec3Df, dir:Vec3Df, w
     }
 }
 
-const GRAVITY:f32 = 9.81/180.0;
-const AIR_RESISTANCE:f32 = 0.99;
-const TURN_RESISTANCE:f32 = 0.7;
+pub const GRAVITY:f32 = 9.81/60.0;
+pub const AIR_RESISTANCE:f32 = 0.99;
+pub const TURN_RESISTANCE:f32 = 0.7;
 const DOWN_DIR:Vec3Df = Vec3Df::new(0.0,0.0, -0.5);
 const OTHER_DIRS:[Vec3Df ; 5] = [
     Vec3Df::new(0.0,0.0, 0.5),
@@ -257,7 +257,7 @@ fn compute_tick<'a>(turn:EntityTurn, id:usize, first_ent:&GameEntityVecRead<'a, 
                     }
                 }
             }
-            total_push.z -= GRAVITY; 
+            total_push.z -= GRAVITY;
             second_ent.tunnels.position_out.send(VehicleEntityEvent::new(MustSync::Server,VehiclePosEvent::new(id, None, VehiclePosUpdate::AddToEverySpeed(total_push, Orientation::zero()))));
 
             
@@ -265,7 +265,7 @@ fn compute_tick<'a>(turn:EntityTurn, id:usize, first_ent:&GameEntityVecRead<'a, 
     }
 }
 
-fn get_nudge_to_nearest_next_whole(number:f32, delta_to_add:f32) -> f32 {
+pub fn get_nudge_to_nearest_next_whole(number:f32, delta_to_add:f32) -> f32 {
     if number.is_sign_positive() {
         let fract = number.fract();
         let nudge = if fract >= 0.5 {
@@ -409,7 +409,8 @@ fn compute_total_nudges(pos:Vec3Df, aabb:AABB, mut spd:Vec3Df, world:&WorldCompu
     
 }
 
-const MAX_TURN_SPD:f32 = 0.02;
+const MAX_TURN_SPD:f32 = 0.2;
+const MAX_SPD:f32 = 0.45;
 
 
 fn after_main_tick<'a>(turn:EntityTurn, id:usize, first_ent:&GameEntityVecRead<'a, CoolGameEngineTID>, second_ent:&VehicleEntityVecRead<'a, CoolGameEngineTID>, world:&WorldComputeHandler<GameMap<CoolVoxel, Road>, CoolGameEngineTID>, extra_data:&ExtraData) {
@@ -484,43 +485,10 @@ fn after_main_tick<'a>(turn:EntityTurn, id:usize, first_ent:&GameEntityVecRead<'
             let movement = &second_ent.position[id];
             let collider = &second_ent.hull[id].complex_collider;
             let static_type = &second_ent.static_types[second_ent.stats[id].static_id];
-            let mut movement_pos = movement.pos;
-            //let mut movement_add = Vec3D::zero();
-            let mut spd = movement.spd;
-            spd *= AIR_RESISTANCE;
-            spd.z -= GRAVITY;
-            if spd.z.abs() > 0.45 {
-                spd.z = 0.45 * spd.z.signum()
-            }
-            if spd.x.abs() > 0.45 {
-                spd.x = 0.45 * spd.x.signum()
-            }
-            if spd.y.abs() > 0.45 {
-                spd.y = 0.45 * spd.y.signum()
-            }
-            let nudges = compute_total_nudges(movement_pos, *collider.get_global_aabb(), spd, world);
-           
-            spd = nudges.new_spd;
-            dbg!(movement_pos);
-            dbg!(movement.orientation);
-            let mut turn_spd = movement.turn_spd;
-            turn_spd.yaw *= AIR_RESISTANCE * TURN_RESISTANCE;
-            turn_spd.pitch *= AIR_RESISTANCE * TURN_RESISTANCE;
-            turn_spd.roll *= AIR_RESISTANCE * TURN_RESISTANCE;
-            if turn_spd.yaw.abs() > MAX_TURN_SPD {
-                turn_spd.yaw = MAX_TURN_SPD * turn_spd.yaw.signum()
-            }
-            if turn_spd.pitch.abs() > MAX_TURN_SPD {
-                turn_spd.pitch = MAX_TURN_SPD * turn_spd.pitch.signum()
-            }
-            if turn_spd.roll.abs() > MAX_TURN_SPD {
-                turn_spd.roll = MAX_TURN_SPD * turn_spd.roll.signum()
-            }
-
-            second_ent.tunnels.position_out.send(VehicleEntityEvent::new(MustSync::Server, VehiclePosEvent::new(id, Some(CoolGameEngineTID::vehicles(id)), VehiclePosUpdate::UpdateEveryPos(movement_pos + spd + nudges.add_to_pos, movement.orientation + turn_spd))));
-            second_ent.tunnels.position_out.send(VehicleEntityEvent::new(MustSync::Server, VehiclePosEvent::new(id, Some(CoolGameEngineTID::vehicles(id)), VehiclePosUpdate::UpdateEverySpeed(spd, turn_spd))));
-
-            second_ent.tunnels.hull_out.send(VehicleEntityEvent::new(MustSync::Server,SimpleComponentEvent::new(id, None, HullUpdate::UpdateCollider(static_type.hull.base_collider.get_moved(movement_pos + spd , movement.orientation + turn_spd)))));
+            let loco = &second_ent.locomotion[id];
+            let stats = &second_ent.stats[id];
+            dbg!(movement.pos, movement.spd, movement.orientation, movement.turn_spd);
+            loco.compute_vehicle_physics(id, &static_type.locomotion, static_type, &world.world, stats, movement, &second_ent.tunnels.hull_out, &second_ent.tunnels.position_out);
             
             
         }

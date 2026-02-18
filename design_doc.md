@@ -337,4 +337,59 @@ blocs piège :
       - look at adjacent chunks
       - if also full of one full type, remove that direction from further compute
       - otherwise, keep that direction
-      
+
+# improvements
+- make local turn speed decrease over time and stop when turn is at limits
+- make normal speed follow ground locomotion direction :)
+   - divide speed vector between all ground locomotion equipment currently touching ground
+   - compute local motion vectors and all that for all of them
+
+- apply gravity to each locomotion equipment seperately when not touching ground
+
+- handle disconnects gracefully
+   - change decode_from_tcp to Result<Vec<T>>
+
+- synchronize ticks
+- even better multiplayer sync
+- make 
+
+- make movement vectors configurable dynamically
+   - along flat surface
+
+# new high speed collision model
+
+- compute collision from on_ground locomotion equipment
+   - current position in world vs next position in world
+   - draw vector/arc between both
+   - test discrete steps between the 2, first that has a voxel, compute nearest nudge, and vehicle reaction to it
+      - how to make sure the nudge keeps the car out of the ground ?
+      - other idea :
+      - first that has a voxel, compute the speed diff starting from collision point that needs to be cancelled (z first)
+      - have to compute every equipment on ground first to divide vector between them
+   - if no voxel in path, compute gravity
+
+
+- how to do movement arc ?
+   - give precision of steps to do from 0 to 1, start to end
+   - position at a given [0, 1] coef is :
+      - partial rotation : (end_rotat - start rotat) * coef = p_rot
+      - current center of rotation : (center of rotation) = ccr
+      - p_rot.rotate(start - ccr) + speed * coef + start
+
+# more vehicle physics :
+
+- different drag coefficients based on ground and how the locomotion equipment interacts with it
+   - applied on first part of tick when engaging locomotion or following speed
+
+
+- properly following speed and applying it to relevant equipment
+   - take speed vector and apply it on all ground equipment currently on ground
+   - has to ignore Z axis of speed
+   - project XY speed to the vehicle's X axis ? if speed is sideways the wheels shouldn't affect it
+   - how to handle the speed change ?
+   - use dot ?
+
+- emulate different gears
+   - different max throttles based on chosen gear
+   - impossible to throttle at a given gear if speed is too low
+   - cool
