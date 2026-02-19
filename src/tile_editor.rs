@@ -3,7 +3,7 @@ use std::{collections::{HashMap, HashSet, VecDeque}, f32::consts::{PI, SQRT_2}, 
 use cosmic_text::{Color, Metrics};
 use hord3::{defaults::{default_rendering::vectorinator_binned::{meshes::{Mesh, MeshID, MeshInstance, MeshLODS, MeshLODType}, shaders::NoOpShader, textures::Textures, Vectorinator}, default_ui::simple_ui::{SimpleUI, SimpleUISave, TextCentering, UIElement, UIElementBackground, UIElementContent, UIElementID}}, horde::{frontend::{interact::Button, MouseState}, game_engine::{multiplayer::Identify, world::WorldTunnelsOut}, geometry::{rotation::Orientation, vec3d::{Vec3D, Vec3Df}}, rendering::camera::Camera}};
 
-use crate::{client::client_tasks::GameUserEvent, cutscene::game_shader::GameShader, game_3d_models::{lit_selection_cube, selection_cube}, game_engine::{CoolGameEngineTID, CoolVoxel, CoolVoxelType}, game_input_handler::GameInputHandler, game_map::{GameMap, GameMapEvent, Voxel, VoxelLight, WorldChunkPos, WorldVoxelPos, get_chunk_pos_i, get_float_pos, get_voxel_pos, light_spreader::{LightPos, LightSpread}, raycaster::Ray, road::Road}, gui_elements::{editor_gui_elements::{light_spreader_elts, voxel_type_choice}, list_choice}, vehicle::locomotion::SurfaceType};
+use crate::{client::client_tasks::GameUserEvent, cutscene::game_shader::GameShader, game_3d_models::{lit_selection_cube, selection_cube}, game_engine::{CoolGameEngineTID, CoolVoxel, CoolVoxelType}, game_input_handler::GameInputHandler, game_map::{GameMap, GameMapEvent, Voxel, VoxelLight, WorldChunkPos, WorldVoxelPos, get_chunk_pos_i, get_float_pos, get_voxel_pos, light_spreader::{LightPos, LightSpread}, raycaster::Ray, road::Road}, gui_elements::{editor_gui_elements::{light_spreader_elts, voxel_type_choice}, list_choice}, vehicle::locomotion::{SurfaceSubType, SurfaceType}};
 
 
 pub const CHUNK_SIZE:usize = 8;
@@ -11,17 +11,17 @@ pub const CHUNK_SIZE_F:f32 = CHUNK_SIZE as f32;
 
 pub fn get_tile_voxels() -> Vec<CoolVoxelType> {
     vec![
-        CoolVoxelType::new(0b00111111, 0, VoxelLight::new(247, 255, 255, 255), None, "Air".to_string(), Some(PathBuf::from("textures/arbre.png")), None, None),
-        CoolVoxelType::new(0, 1, VoxelLight::zero_light(), None, "Sand".to_string(), Some(PathBuf::from("textures/sable.png")), None, Some(SurfaceType::Ground)),
-        CoolVoxelType::new(0, 2, VoxelLight::zero_light(), None, "Flowers".to_string(), Some(PathBuf::from("textures/terre_herbe.png")), None, Some(SurfaceType::Ground)),
-        CoolVoxelType::new(0, 3, VoxelLight::zero_light(), None, "Grassy Ground".to_string(), Some(PathBuf::from("textures/terre_cail.png")), None, Some(SurfaceType::Ground)),
-        CoolVoxelType::new(0, 4, VoxelLight::zero_light(), None, "Ground".to_string(), Some(PathBuf::from("textures/terre.png")), None, Some(SurfaceType::Ground)),
-        CoolVoxelType::new(0, 5, VoxelLight::zero_light(), None, "Rock".to_string(), Some(PathBuf::from("textures/roche.png")), None, Some(SurfaceType::Ground)),
-        CoolVoxelType::new(0, 0, VoxelLight::zero_light(), None, "Snow".to_string(), Some(PathBuf::from("textures/neige.png")), None, Some(SurfaceType::Ground)),
-        CoolVoxelType::new(0, 6, VoxelLight::zero_light(), None, "Water".to_string(), Some(PathBuf::from("textures/eau.png")), None, Some(SurfaceType::Water)),
-        CoolVoxelType::new(0, 7, VoxelLight::zero_light(), None, "Deep Water".to_string(), Some(PathBuf::from("textures/eau_prof.png")), None, Some(SurfaceType::Water)),
-        CoolVoxelType::new(0, 8, VoxelLight::zero_light(), None, "Metal".to_string(), Some(PathBuf::from("textures/metal_0.png")), None, Some(SurfaceType::Ground)),
-        CoolVoxelType::new(0, 3, VoxelLight::zero_light(), None, "Text Test".to_string(), None, None, Some(SurfaceType::Ground)),
+        CoolVoxelType::new(0b00111111, 0, VoxelLight::new(247, 255, 255, 255), None, "Air".to_string(), Some(PathBuf::from("textures/arbre.png")), None, SurfaceType::Air, SurfaceSubType::Smooth),
+        CoolVoxelType::new(0, 1, VoxelLight::zero_light(), None, "Sand".to_string(), Some(PathBuf::from("textures/sable.png")), None, SurfaceType::Ground, SurfaceSubType::Smooth),
+        CoolVoxelType::new(0, 2, VoxelLight::zero_light(), None, "Flowers".to_string(), Some(PathBuf::from("textures/terre_herbe.png")), None, SurfaceType::Ground, SurfaceSubType::Rough),
+        CoolVoxelType::new(0, 3, VoxelLight::zero_light(), None, "Grassy Ground".to_string(), Some(PathBuf::from("textures/terre_cail.png")), None, SurfaceType::Ground, SurfaceSubType::Jagged),
+        CoolVoxelType::new(0, 4, VoxelLight::zero_light(), None, "Ground".to_string(), Some(PathBuf::from("textures/terre.png")), None, SurfaceType::Ground, SurfaceSubType::Rough),
+        CoolVoxelType::new(0, 5, VoxelLight::zero_light(), None, "Rock".to_string(), Some(PathBuf::from("textures/roche.png")), None, SurfaceType::Ground, SurfaceSubType::Jagged),
+        CoolVoxelType::new(0, 0, VoxelLight::zero_light(), None, "Snow".to_string(), Some(PathBuf::from("textures/neige.png")), None, SurfaceType::Ground, SurfaceSubType::Smooth),
+        CoolVoxelType::new(0, 6, VoxelLight::zero_light(), None, "Water".to_string(), Some(PathBuf::from("textures/eau.png")), None, SurfaceType::Water, SurfaceSubType::Smooth),
+        CoolVoxelType::new(0, 7, VoxelLight::zero_light(), None, "Deep Water".to_string(), Some(PathBuf::from("textures/eau_prof.png")), None, SurfaceType::Water, SurfaceSubType::Rough),
+        CoolVoxelType::new(0, 8, VoxelLight::zero_light(), None, "Metal".to_string(), Some(PathBuf::from("textures/metal_0.png")), None, SurfaceType::Ground, SurfaceSubType::Industrial),
+        CoolVoxelType::new(0, 3, VoxelLight::zero_light(), None, "Text Test".to_string(), None, None, SurfaceType::Ground, SurfaceSubType::Industrial),
     ]
 }
 

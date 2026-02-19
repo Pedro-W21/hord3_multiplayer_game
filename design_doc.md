@@ -380,6 +380,10 @@ blocs piège :
 
 - different drag coefficients based on ground and how the locomotion equipment interacts with it
    - applied on first part of tick when engaging locomotion or following speed
+   - how to create different handling cars with different ground/water/air ?
+      - surface subtypes
+      - a locomotion equipment has a hashmap of (surface type, surface subtype) -> (spd_drag_coef, turn_spd_drag_coef)
+      - if a pair is not defined, take default values from a static map
 
 
 - properly following speed and applying it to relevant equipment

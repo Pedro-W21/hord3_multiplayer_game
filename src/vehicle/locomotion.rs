@@ -1,9 +1,32 @@
-use std::{fmt::Debug, sync::mpmc::Sender};
+use std::{collections::HashMap, fmt::Debug, sync::{LazyLock, mpmc::Sender}};
 
 use hord3::horde::{game_engine::{entity::{Component, ComponentEvent, SimpleComponentEvent, StaticComponent}, multiplayer::{Identify, MustSync}, world::WorldComputeHandler}, geometry::{rotation::{Orientation, Rotation}, vec3d::{Coord, Vec3Df}}};
 use to_from_bytes_derive::{FromBytes, ToBytes};
 
 use crate::{driver::{actions::{Action, ActionKind, ActionResult}, colliders::BoundingCollider}, game_engine::{AIR_RESISTANCE, CoolGameEngineTID, CoolVoxel, GRAVITY, TURN_RESISTANCE, get_nudge_to_nearest_next_whole}, game_map::{GameMap, VoxelLight, VoxelType, get_voxel_pos, raycaster::{Curve, Ray}, road::Road}, vehicle::{StaticVehicleEntity, VehicleEntityEvent, hull::HullUpdate, position::{VehiclePosEvent, VehiclePosUpdate, VehiclePosition}, vehicle_stats::VehicleStats}};
+
+static DEFAULT_COEFS:LazyLock<HashMap<(SurfaceType, SurfaceSubType), SurfaceCoefs>> = LazyLock::new(|| {HashMap::from([
+    ((SurfaceType::Ground, SurfaceSubType::Industrial), SurfaceCoefs::new(0.9, 0.9)),
+    ((SurfaceType::Ground, SurfaceSubType::Smooth), SurfaceCoefs::new(0.3, 0.3)),
+    ((SurfaceType::Ground, SurfaceSubType::Rough), SurfaceCoefs::new(0.1, 0.1)),
+    ((SurfaceType::Ground, SurfaceSubType::Jagged), SurfaceCoefs::new(0.6, 0.6)),
+
+    ((SurfaceType::Water, SurfaceSubType::Industrial), SurfaceCoefs::new(0.9, 0.9)),
+    ((SurfaceType::Water, SurfaceSubType::Smooth), SurfaceCoefs::new(0.8, 0.8)),
+    ((SurfaceType::Water, SurfaceSubType::Rough), SurfaceCoefs::new(0.7, 0.7)),
+    ((SurfaceType::Water, SurfaceSubType::Jagged), SurfaceCoefs::new(0.6, 0.6)),
+
+    ((SurfaceType::Air, SurfaceSubType::Industrial), SurfaceCoefs::new(0.9, 0.9)),
+    ((SurfaceType::Air, SurfaceSubType::Smooth), SurfaceCoefs::new(0.8, 0.8)),
+    ((SurfaceType::Air, SurfaceSubType::Rough), SurfaceCoefs::new(0.7, 0.7)),
+    ((SurfaceType::Air, SurfaceSubType::Jagged), SurfaceCoefs::new(0.6, 0.6)),
+
+    ((SurfaceType::Any, SurfaceSubType::Industrial), SurfaceCoefs::new(0.9, 0.9)),
+    ((SurfaceType::Any, SurfaceSubType::Smooth), SurfaceCoefs::new(0.8, 0.8)),
+    ((SurfaceType::Any, SurfaceSubType::Rough), SurfaceCoefs::new(0.7, 0.7)),
+    ((SurfaceType::Any, SurfaceSubType::Jagged), SurfaceCoefs::new(0.6, 0.6)),
+])});
+
 
 #[derive(Clone, Debug, ToBytes, FromBytes, PartialEq)]
 pub struct Locomotion {
@@ -31,11 +54,13 @@ impl Locomotion {
         let mut new_eqs = Vec::with_capacity(self.equipment.len());
         let mut on_ground_eqs = Vec::with_capacity(self.equipment.len());
         let mut not_on_ground_eqs= Vec::with_capacity(self.equipment.len());
+        let mut surfaces = Vec::with_capacity(self.equipment.len());
         for (i, eq) in self.equipment.iter().enumerate() {
-            let (new_eq, v_spd_chng, v_turn_spd_chng) = eq.compute_activations_and_update_equipment(&static_locomotion.equipment[eq.static_equipment], world, vehicle_stats, vehicle_position, &self.driver_actions);
+            let (new_eq, v_spd_chng, v_turn_spd_chng, surface) = eq.compute_activations_and_update_equipment(&static_locomotion.equipment[eq.static_equipment], world, vehicle_stats, vehicle_position, &self.driver_actions);
             if let Some(on_ground) = new_eq.compute_on_ground_if_relevant(&static_locomotion.equipment[eq.static_equipment], world, vehicle_stats, vehicle_position) {
                 if on_ground {
                     on_ground_eqs.push(i);
+                    surfaces.push(surface.unwrap_or((SurfaceType::Air, SurfaceSubType::Industrial)));
                 }
                 else {
                     not_on_ground_eqs.push(i);
@@ -52,21 +77,27 @@ impl Locomotion {
 
         // apply speed from ground equipment that is on the ground
         //dbg!(on_ground_eqs.len(), not_on_ground_eqs.len());
-        let total_spd = (vehicle_position.spd + vehicle_spd_change);
-        if on_ground_eqs.len() > 0 && total_spd.norme_square() > 0.0001 {
-            let divided_spd = total_spd/on_ground_eqs.len() as f32;
-            let dot = vehicle_rotat.rotate(Vec3Df::new(1.0, 0.0, 0.0)).dot(&divided_spd.normalise());
-            let final_spd = Vec3Df::new(1.0, 0.0, 0.0) * divided_spd.norme() * dot;
-            for ground in on_ground_eqs {
-                let (spd_add, turn_spd_add, _) = new_eqs[ground].compute_vehicle_speed_vector_and_turn_spd_change(&static_locomotion.equipment[new_eqs[ground].static_equipment], world, vehicle_stats, vehicle_position, final_spd.norme(),final_spd.normalise(), MotionApplication::FlatAlong2AxisFromEquipment { removed: Coord::Z });
-                vehicle_turn_spd_change += turn_spd_add;
+        let mut total_ground_spd = vehicle_position.spd;
+        total_ground_spd.z = 0.0;
+        let mut final_spd_add = Vec3Df::zero();
+        if on_ground_eqs.len() > 0 && total_ground_spd.norme_square() > 0.000001 {
+            let divided_spd = total_ground_spd/on_ground_eqs.len() as f32;
+            let dot = dbg!(vehicle_rotat.rotate(Vec3Df::new(1.0, 0.0, 0.0))).dot(&divided_spd.normalise());
+            dbg!(dot);
+            let new_spd = Vec3Df::new(1.0, 0.0, 0.0) * divided_spd.norme() * (1.0 - dot.abs()) * dot.signum();
+            final_spd_add += total_ground_spd * -(1.0 - dot.abs());
+            for (ground, surface) in on_ground_eqs.iter().zip(surfaces.iter()) {
+                let (spd_add, turn_spd_add, _) = new_eqs[*ground].compute_vehicle_speed_vector_and_turn_spd_change(&static_locomotion.equipment[new_eqs[*ground].static_equipment], world, vehicle_stats, vehicle_position, new_spd.norme(),new_spd.normalise(), MotionApplication::FlatAlong2AxisFromEquipment { removed: Coord::Z });
+                let coefs = static_locomotion.equipment[new_eqs[*ground].static_equipment].get_coefs_for(*surface);
+                vehicle_turn_spd_change += turn_spd_add * coefs.turn_spd_drag_coefficient;
+                final_spd_add += spd_add * coefs.spd_drag_coefficient;
                 //vehicle_spd_change += spd_add  * 0.01;
                 //let (spd_add, turn_spd_add) = new_eqs[ground].compute_vehicle_speed_vector_and_turn_spd_change(&static_locomotion.equipment[new_eqs[ground].static_equipment], world, vehicle_stats, vehicle_position, gravity, Vec3Df::new(0.0, 0.0, 1.0), MotionApplication::WorldCoords);
                 //vehicle_turn_spd_change += turn_spd_add;
             }
         }
         
-
+        vehicle_spd_change += final_spd_add;
         //dbg!(vehicle_spd_change, vehicle_turn_spd_change);
         loco_events.send(VehicleEntityEvent::new(MustSync::Server, LocomotionEvent::new(self_id, None, LocomotionUpdate::UpdateEverything(new_eqs)))).unwrap();
         if self.driver_actions.len() > 0 {
@@ -203,7 +234,8 @@ pub struct LocomotionEquipment {
 
 pub struct Activated {
     activation_id:usize,
-    strength:f32
+    strength:f32,
+    surface:(SurfaceType, SurfaceSubType)
 }
 
 impl LocomotionEquipment {
@@ -216,9 +248,15 @@ impl LocomotionEquipment {
         driver_actions:&Vec<(Action, ActionResult)>
     ) -> Vec<Activated> {
         let mut activations = Vec::with_capacity(2);
+        let vehicle_voxel_type = world.get_type_of_voxel_at(get_voxel_pos(vehicle_position.pos));
+        let base_surface = match vehicle_voxel_type {
+            Some(vox_type) => (vox_type.surface_type, vox_type.surface_subtype),
+            None => (SurfaceType::Air, SurfaceSubType::Industrial)
+        };
         'reqs: for (i, reqs) in static_type.activation_requirements.iter().enumerate() {
             let mut possible = true;
             let mut strength = 0.0;
+            let mut surface = base_surface.clone();
             for req in &reqs.requirements {
                 match req {
                     ActivationRequirement::NitroAmount(amount) => possible = possible && vehicle_stats.nitro_left > *amount,
@@ -260,7 +298,10 @@ impl LocomotionEquipment {
                         let end = ray.get_end(&world);
                         if end.final_length >= *from && end.final_length <= *to {
                             match world.get_type_of_voxel_at(get_voxel_pos(end.end - vehicle_position.pos)) {
-                                Some(voxel_type) => possible = possible && voxel_type.surface_type == *surface_type,
+                                Some(voxel_type) => {
+                                    possible = possible && voxel_type.surface_type == *surface_type;
+                                    surface = (voxel_type.surface_type, voxel_type.surface_subtype);
+                                },
                                 None => possible = false
                             }
                         }
@@ -274,6 +315,7 @@ impl LocomotionEquipment {
                         let end = ray.get_end(&world);
                         match world.get_type_of_voxel_at(get_voxel_pos(end.end)) {
                             Some(voxel_type) => {
+                                surface = (voxel_type.surface_type, voxel_type.surface_subtype);
                                 if self.current_collider.rotate_around_origin(&vehicle_rotation).point_inside(end.end - vehicle_position.pos) {
                                     possible = possible && voxel_type.surface_type == *surface_type;
                                 }
@@ -296,7 +338,7 @@ impl LocomotionEquipment {
                 }
             }
             if possible {
-                activations.push(Activated { activation_id: i, strength });
+                activations.push(Activated { activation_id: i, strength, surface });
             }
         }
         activations
@@ -380,16 +422,19 @@ impl LocomotionEquipment {
         vehicle_stats:&VehicleStats,
         vehicle_position:&VehiclePosition,
         driver_actions:&Vec<(Action, ActionResult)>
-    ) -> (Self, Vec3Df, Orientation) {
+    ) -> (Self, Vec3Df, Orientation, Option<(SurfaceType, SurfaceSubType)>) {
         let mut vehicle_spd_add = Vec3Df::zero();
         let mut vehicle_turn_spd_add = Orientation::zero();
         let mut self_clone = self.clone();
+        let mut surface = None;
         for activated in self.can_activate(static_type, world, vehicle_stats, vehicle_position, driver_actions) {
+            surface = Some(activated.surface);
+            let coefs = static_type.get_coefs_for(activated.surface);
             match static_type.activation_requirements[activated.activation_id].output {
                 ActivationOutput::ActivateMotion => {
                     let (spd_add, turn_spd_add, factor) = self_clone.compute_vehicle_speed_vector_and_turn_spd_change(static_type, world, vehicle_stats, vehicle_position, activated.strength, static_type.motion.forward_vector, static_type.motion.motion_application.clone());
-                    vehicle_spd_add += spd_add;
-                    vehicle_turn_spd_add += turn_spd_add;
+                    vehicle_spd_add += spd_add * coefs.spd_drag_coefficient;
+                    vehicle_turn_spd_add += turn_spd_add * coefs.turn_spd_drag_coefficient;
                     dbg!(spd_add, turn_spd_add);
                 },
                 ActivationOutput::Turn(axis) => {
@@ -400,15 +445,15 @@ impl LocomotionEquipment {
             }
         }
         self_clone.current_local_orient = self_clone.compute_new_self_orient(static_type);
-        self_clone.current_local_turn_speed.yaw *= 0.6;
-        self_clone.current_local_turn_speed.pitch *= 0.6;
-        self_clone.current_local_turn_speed.roll *= 0.6;
+        self_clone.current_local_turn_speed.yaw *= 0.1;
+        self_clone.current_local_turn_speed.pitch *= 0.1;
+        self_clone.current_local_turn_speed.roll *= 0.1;
         if vehicle_spd_add != Vec3Df::zero() {
             //dbg!(vehicle_spd_add);
             //dbg!(self_clone.current_local_turn_speed);
             //dbg!(self_clone.current_local_orient);
         }
-        (self_clone, vehicle_spd_add, vehicle_turn_spd_add)
+        (self_clone, vehicle_spd_add, vehicle_turn_spd_add, surface)
     }
     pub fn compute_on_ground_if_relevant(&self,
         static_type:&StaticLocomotionEquipment,
@@ -429,7 +474,7 @@ impl LocomotionEquipment {
             match world.get_type_of_voxel_at(get_voxel_pos(end.end)) {
                 Some(voxel_type) => {
                     if self.current_collider.rotate_around_origin(&vehicle_rotation).point_inside(end.end - vehicle_position.pos) {
-                        on_ground = voxel_type.surface_type == Some(surface_type.clone());
+                        on_ground = voxel_type.surface_type == surface_type.clone();
                     }
                 },
                 None => ()
@@ -461,14 +506,14 @@ impl LocomotionEquipment {
                 // Apply gravity because the ray didn't reach anything
                 println!("APPLYING GRAVITY ON {}", self.static_equipment);
                 let (spd_add, turn_spd_add, factor) = self.compute_vehicle_speed_vector_and_turn_spd_change(static_type, world, vehicle_stats, vehicle_position, GRAVITY, Vec3Df::new(0.0, 0.0, -1.0), MotionApplication::RotateAgainstVehicle);
-                dbg!(turn_spd_add);
+                //dbg!(turn_spd_add);
                 (spd_add, turn_spd_add, false)
             }
             else {
                 println!("NOT GRAVITY ON {} with ray len {} and diff len {}", self.static_equipment, end.final_coef, diff_len);
                 match world.get_type_of_voxel_at(get_voxel_pos(end.end)) {
                     Some(voxel_type) => {
-                        if self.current_collider.rotate_around_origin(&vehicle_rotation).point_inside(end.end - vehicle_position.pos) && voxel_type.surface_type == Some(surface_type.clone()) {
+                        if self.current_collider.rotate_around_origin(&vehicle_rotation).point_inside(end.end - vehicle_position.pos) && voxel_type.surface_type == surface_type.clone() {
                             //let (speed_nudge, vertical, pos_nudge) = compute_nudges_from(end.end, Vec3Df::zero(), world, true);
                             let mut speed_nudge = diff_vector * -(1.0 - end.final_coef);
                             speed_nudge = get_minimum_nudge(end.end, speed_nudge, world);
@@ -478,7 +523,7 @@ impl LocomotionEquipment {
                             //let next_pos_new_turn = vehicle_position.pos + new_rotation.rotate(self.current_local_position) + vehicle_position.spd + speed_nudge;
                             //speed_nudge += next_pos_new_turn - next_pos_old_turn;
                             //speed_nudge = get_minimum_nudge(end.end, speed_nudge, world);
-                            dbg!(speed_nudge, turn_spd_add, factor);
+                            //dbg!(speed_nudge, turn_spd_add, factor);
                             (speed_nudge, turn_spd_add, true)
                         }
                         else {
@@ -540,7 +585,14 @@ pub struct StaticLocomotionEquipment {
     pub recoil:EqRecoil,
     pub collider:BoundingCollider,
     pub down_dir:Option<Vec3Df>,
-    pub is_ground_equipment:Option<SurfaceType>
+    pub is_ground_equipment:Option<SurfaceType>,
+    pub drag_coefficients:HashMap<(SurfaceType, SurfaceSubType), SurfaceCoefs>
+}
+
+impl StaticLocomotionEquipment {
+    pub fn get_coefs_for(&self, surface:(SurfaceType, SurfaceSubType)) -> SurfaceCoefs {
+        self.drag_coefficients.get(&surface).cloned().unwrap_or(DEFAULT_COEFS.get(&surface).cloned().unwrap())
+    }
 }
 
 #[derive(Clone, Debug, ToBytes, FromBytes)]
@@ -620,8 +672,8 @@ impl ActivationRequirements {
 #[derive(Clone, Debug, ToBytes, FromBytes)]
 pub enum ActivationRequirement {
     NitroAmount(f32),
-    SurfaceContact(Option<SurfaceType>),
-    DistanceToSurface{from:f32, to:f32, surface_type:Option<SurfaceType>},
+    SurfaceContact(SurfaceType),
+    DistanceToSurface{from:f32, to:f32, surface_type:SurfaceType},
     DriverAction(DriverAction),
     HullPosition
 }
@@ -659,9 +711,37 @@ impl DriverAction {
     }
 }
 
-#[derive(Clone, Debug, ToBytes, FromBytes, PartialEq)]
+#[derive(Clone, Copy, Debug, ToBytes, FromBytes, PartialEq, Eq, Hash)]
 pub enum SurfaceType {
     Ground,
     Water,
+    Air,
     Any
+}
+
+#[derive(Clone, Copy, Debug, ToBytes, FromBytes, PartialEq, Eq, Hash)]
+pub enum SurfaceSubType {
+    Industrial,
+    Smooth,
+    Rough,
+    Jagged
+}
+
+#[derive(Clone, ToBytes, FromBytes, PartialEq)]
+pub struct SurfaceCoefs {
+    pub spd_drag_coefficient:f32,
+    pub turn_spd_drag_coefficient:f32,
+}
+
+impl SurfaceCoefs {
+    pub fn new(spd_drag_coefficient:f32, turn_spd_drag_coefficient:f32) -> Self {
+        Self { spd_drag_coefficient, turn_spd_drag_coefficient }
+    }
+}
+
+#[derive(Clone, ToBytes, FromBytes, PartialEq)]
+pub struct SurfaceData {
+    pub surface_type:SurfaceType,
+    pub spd_drag_coefficient:f32,
+    pub turn_spd_drag_coefficient:f32,
 }

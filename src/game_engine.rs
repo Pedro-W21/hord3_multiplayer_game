@@ -4,7 +4,7 @@ use engine_derive::GameEngine;
 use hord3::{defaults::default_rendering::vectorinator_binned::{Vectorinator, rendering_spaces::ViewportData, shaders::NoOpShader}, horde::{game_engine::{engine::{GameEngine, MovingObjectID}, entity::{Entity, EntityVec, MultiplayerEntity, Renderable, SimpleComponentEvent}, multiplayer::{GlobalComponent, GlobalEvent, HordeEventReport, HordeMultiModeChoice, HordeMultiplayer, HordeMultiplayerMode, Identify, MultiplayerEngine, MustSync}, static_type_id::HasStaticTypeID, world::{World, WorldComputeHandler, WorldEvent, WorldHandler, WorldOutHandler, WorldWriteHandler}}, geometry::{rotation::{Orientation, Rotation}, vec3d::{Vec3D, Vec3Df}}, rendering::camera::Camera, scheduler::IndividualTask, sound::{ARWWaves, WavesHandler}}};
 use to_from_bytes_derive::{FromBytes, ToBytes};
 
-use crate::{cutscene::{game_shader::GameShader, reverse_camera_coords::reverse_from_raster_to_worldpos}, driver::{Collider, ColliderEvent, ColliderEventVariant, GameEntity, GameEntityEvent, GameEntityVecRead, GameEntityVecWrite, MovementEvent, MovementEventVariant, actions::{Action, ActionKind, ActionSource, ActionTimer, ActionsEvent, ActionsUpdate}, colliders::AABB}, game_map::{GameMap, GameMapEvent, Voxel, VoxelLight, VoxelModel, VoxelType, get_voxel_pos, road::Road}, proxima_link::HordeProximaAIRequest, vehicle::{VehicleEntity, VehicleEntityEvent, VehicleEntityVecRead, VehicleEntityVecWrite, hull::HullUpdate, locomotion::SurfaceType, position::{VehiclePosEvent, VehiclePosUpdate}}};
+use crate::{cutscene::{game_shader::GameShader, reverse_camera_coords::reverse_from_raster_to_worldpos}, driver::{Collider, ColliderEvent, ColliderEventVariant, GameEntity, GameEntityEvent, GameEntityVecRead, GameEntityVecWrite, MovementEvent, MovementEventVariant, actions::{Action, ActionKind, ActionSource, ActionTimer, ActionsEvent, ActionsUpdate}, colliders::AABB}, game_map::{GameMap, GameMapEvent, Voxel, VoxelLight, VoxelModel, VoxelType, get_voxel_pos, road::Road}, proxima_link::HordeProximaAIRequest, vehicle::{VehicleEntity, VehicleEntityEvent, VehicleEntityVecRead, VehicleEntityVecWrite, hull::HullUpdate, locomotion::{SurfaceData, SurfaceSubType, SurfaceType}, position::{VehiclePosEvent, VehiclePosUpdate}}};
 
 
 #[derive(Clone, FromBytes, ToBytes, PartialEq, Debug)]
@@ -86,12 +86,13 @@ pub struct CoolVoxelType {
     pub name:String,
     pub texture_path:Option<String>,
     pub base_extra_voxel_data:Option<ExtraVoxelData>,
-    pub surface_type:Option<SurfaceType>
+    pub surface_type:SurfaceType,
+    pub surface_subtype:SurfaceSubType,
 }
 
 impl CoolVoxelType {
-    pub fn new(empty_sides:u8, texture:usize, light_passthrough:VoxelLight, is_light_source:Option<VoxelLight>, name:String, texture_path:Option<PathBuf>, base_extra_voxel_data:Option<ExtraVoxelData>, surface_type:Option<SurfaceType>) -> Self {
-        Self { empty_sides, texture, light_passthrough, is_light_source, name, texture_path:texture_path.map(|path| {path.to_string_lossy().to_string()}), base_extra_voxel_data, surface_type }
+    pub fn new(empty_sides:u8, texture:usize, light_passthrough:VoxelLight, is_light_source:Option<VoxelLight>, name:String, texture_path:Option<PathBuf>, base_extra_voxel_data:Option<ExtraVoxelData>, surface_type:SurfaceType, surface_subtype:SurfaceSubType) -> Self {
+        Self { empty_sides, texture, light_passthrough, is_light_source, name, texture_path:texture_path.map(|path| {path.to_string_lossy().to_string()}), base_extra_voxel_data, surface_type, surface_subtype }
     }
 }
 

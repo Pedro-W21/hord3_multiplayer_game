@@ -1,4 +1,4 @@
-use std::{f32::consts::PI, io::{self, Read}, sync::Arc};
+use std::{collections::HashMap, f32::consts::PI, io::{self, Read}, sync::Arc};
 
 use hord3::{defaults::default_rendering::vectorinator_binned::meshes::{Mesh, MeshID, MeshLODS, MeshLODType}, horde::geometry::{rotation::Orientation, vec3d::{Coord, Vec3Df}}};
 
@@ -63,14 +63,14 @@ fn get_default_loco_equips(aabb:AABB) -> Vec<StaticLocomotionEquipment> {
         activation_requirements:vec![
             ActivationRequirements::new(
                 vec![
-                    ActivationRequirement::SurfaceContact(Some(SurfaceType::Ground)),
+                    ActivationRequirement::SurfaceContact(SurfaceType::Ground),
                     ActivationRequirement::DriverAction(DriverAction::Throttle { from: -1.0, to: 1.0 })
                 ],
                 ActivationOutput::ActivateMotion,
             ),
             ActivationRequirements::new(
                 vec![
-                    ActivationRequirement::SurfaceContact(Some(SurfaceType::Ground)),
+                    ActivationRequirement::SurfaceContact(SurfaceType::Ground),
                     ActivationRequirement::DriverAction(DriverAction::HorizontalReorientation { from: -1.0, to: 1.0 })
                 ],
                 ActivationOutput::Turn(Coord::Z),
@@ -92,7 +92,8 @@ fn get_default_loco_equips(aabb:AABB) -> Vec<StaticLocomotionEquipment> {
         },
         collider:BoundingCollider::BS(BoundingSphere::new(aabb.get_ground_vertices()[0], 0.5)),
         down_dir:None,
-        is_ground_equipment:Some(SurfaceType::Ground)
+        is_ground_equipment:Some(SurfaceType::Ground),
+        drag_coefficients:HashMap::new(),
     };
     let mut equipments = Vec::with_capacity(4);
     let turning_wheels = [1, 2];
