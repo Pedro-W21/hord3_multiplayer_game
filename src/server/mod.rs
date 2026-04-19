@@ -21,9 +21,9 @@ use crate::{driver::{actions::{Action, ActionKind, ActionSource, ActionTimer, Ac
 pub mod server_tasks;
 
 pub fn server_func() {
-    const TICKRATE:usize = 45;
+    const TICKRATE:usize = 90;
     let mut world = GameMap::new(100, ChunkDims::new(8, 8, 8), get_tile_voxels(), (255,255,255), 1, Road::new(WorldChunkPos::new(0,0,1), Vec3Df::new(1.0, 0.0, 0.0)));
-    let mut perlin = Perlin::new().set_seed(13095);
+    let mut perlin = Perlin::new(13095);
     let mut world_height = 15.0;
     let mut water_level = 10.0;
     let start = Vec3D::new(-15, -15, -2);
@@ -165,6 +165,21 @@ pub fn server_func() {
                 for (c_pos, chunk) in data {
                     engine.world.tunnels_out.send_event(GameMapEvent::NewChunk(c_pos, chunk));
                 }
+            }
+            else {
+                let engine_read = engine.vehicles.get_read();
+                let first_position = engine_read.position[0].pos; // must be position of first place in reality
+                let mut world_write = engine.world.world.write().unwrap();
+                if world_write.generator.position_within_last(first_position) {
+                    let dims = world_write.get_chunk_dims_vector_f();
+                    world_write.generator.step_forwards(3.0, &dims);
+                    let chunks = world_write.generator.get_chunks_to_generate(3.0, &world_write);
+                    let data = world_write.generate_chunks_with_generator_and_get_them(chunks);
+                    for (c_pos, chunk) in data {
+                        engine.world.tunnels_out.send_event(GameMapEvent::NewChunk(c_pos, chunk));
+                    }
+                }
+                
             }
             engine.extra_data.tick.fetch_add(1, Ordering::Relaxed);
             0

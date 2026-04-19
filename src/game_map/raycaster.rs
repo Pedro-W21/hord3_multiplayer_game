@@ -3,7 +3,7 @@ use core::f32;
 
 use hord3::horde::geometry::{rotation::{Orientation, Rotation}, vec3d::Vec3Df};
 
-use crate::{game_engine::CoolVoxel, game_map::road::Road};
+use crate::{game_engine::CoolVoxel, game_map::{Collision, road::Road}};
 
 use super::{get_voxel_pos, GameMap, VoxelType};
 
@@ -34,7 +34,7 @@ impl Ray {
         let max_length = self.max_length.unwrap_or(f32::INFINITY);
         let mut length = 0.0;
         //dbg!(dir);
-        while length < max_length && chunks.get_type_of_voxel_at(get_voxel_pos(test)).is_some_and(|vox_type| {vox_type.sides_empty() == 0b00111111}) {
+        while length < max_length && !chunks.simple_collision(test) {
             test += dir;
             length += PRECISION;
         }
@@ -44,7 +44,7 @@ impl Ray {
             for i in 0..8 {
                 let dir = self.direction * final_precision;
                 let test_back = test - dir;
-                if chunks.is_voxel_solid(get_voxel_pos(test_back)) {
+                if chunks.simple_collision(test_back) {
                     test = test_back;
                     length -= final_precision;
                 }
@@ -97,7 +97,7 @@ impl Curve {
         //dbg!(self.orient_diff);
         let mut test = self.get_at(coef);
         //dbg!(test);
-        while coef < 1.0 && !chunks.is_voxel_solid(get_voxel_pos(test)) {
+        while coef < 1.0 && !chunks.simple_collision(test) {
             coef += CURVE_PRECISION;
             test = self.get_at(coef);
         }
@@ -108,7 +108,7 @@ impl Curve {
             let mut final_precision = CURVE_PRECISION * 0.5;
             for i in 0..8 {
                 let test_back = self.get_at(coef - final_precision);
-                if chunks.is_voxel_solid(get_voxel_pos(test_back)) {
+                if chunks.simple_collision(test_back) {
                     test = test_back;
                     coef -= final_precision;
                 }
@@ -130,4 +130,29 @@ pub struct ArcEnd {
     pub end:Vec3Df,
     pub tangent:Vec3Df,
     pub final_coef:f32
+}
+
+pub fn get_closest_ground_collision_to(pos:Vec3Df, world:&GameMap<CoolVoxel, Road>) -> Option<Collision<CoolVoxel>> {
+    let start_dir = Vec3Df::new(0.0, 0.0, -1.0);
+    let ray = Ray::new(pos, start_dir, Some(100.0));
+    let end = ray.get_end(&world);
+    if let Some(collision) = world.full_collision(end.end, Vec3Df::zero()) {
+        let ray2 = Ray::new(pos, collision.surface_normal * collision.surface_normal.dot(&start_dir).signum(), Some(100.0));
+        let end2 = ray2.get_end(&world); 
+        if let Some(collision2) = world.full_collision(end2.end, Vec3Df::zero()) {
+            //dbg!(end.end, end2.end, collision.surface_normal, collision2.surface_normal);
+            if end2.end.dist(&pos) < end.end.dist(&pos) {
+                Some(collision2)
+            }
+            else {
+                Some(collision)
+            }
+        }
+        else {
+            Some(collision)
+        }
+    }
+    else {
+        None
+    }
 }

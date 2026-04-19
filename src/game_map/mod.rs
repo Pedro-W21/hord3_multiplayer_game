@@ -5,6 +5,8 @@ use to_from_bytes::{FromBytes, ToBytes};
 use to_from_bytes_derive::{FromBytes, ToBytes};
 use vec_sparse_grid::{SetGrid, SetGridUpdate};
 
+use crate::{game_engine::CoolVoxel, game_map::road::Road};
+
 
 pub mod light_spreader;
 pub mod raycaster;
@@ -302,9 +304,11 @@ impl<'a, V:Voxel, G:Generator<V>> Renderable<VectorinatorWrite<'a>> for GameMap<
                 if chunk.mesh_updated == false || self.forced_rerender {
                     let mut lods = Vec::new();
                     if self.dims.chunk_height_i == self.dims.chunk_length_i && self.dims.chunk_length_i == self.dims.chunk_width_i && self.dims.chunk_height_i >= 8 {
-                        const STEPS:[i32 ; 4] = [1, 2, 4, 8];
+                        let (first_lod, effective_dirs, mut face_data) = self.get_lod_with_1_step(chunk, around);
+                        lods.push(MeshLODType::Mesh(Arc::new(first_lod)));
+                        const STEPS:[i32 ; 3] = [2, 4, 8];
                         for step in STEPS {
-                            lods.push(MeshLODType::Mesh(Arc::new( self.get_lod_with_step(chunk, around, step))));
+                            lods.push(MeshLODType::Mesh(Arc::new( self.get_lod_with_step(chunk, around, ((step/2) as usize, step), effective_dirs, &mut face_data))));
                         }
                     }
                     else {
@@ -457,10 +461,10 @@ impl<V:Voxel> MapChunk<V> {
         }
     }
     fn get_voxel_data(&self, pos:WorldVoxelPos, dims:&ChunkDims) -> &V {
-        &self.voxels[pos.x as usize + (pos.y as usize * dims.chunk_length) + (pos.z as usize * dims.chunk_slice_area)]
+        self.only_1_type.as_ref().unwrap_or_else(|| {&self.voxels[pos.x as usize + (pos.y as usize * dims.chunk_length) + (pos.z as usize * dims.chunk_slice_area)]}) 
     }
     fn get_voxel_data_mut(&mut self, pos:WorldVoxelPos, dims:&ChunkDims) -> &mut V {
-        &mut self.voxels[pos.x as usize + (pos.y as usize * dims.chunk_length) + (pos.z as usize * dims.chunk_slice_area)]
+        self.only_1_type.as_mut().unwrap_or_else(|| {&mut self.voxels[pos.x as usize + (pos.y as usize * dims.chunk_length) + (pos.z as usize * dims.chunk_slice_area)]})
     }
     fn get_at_worldpos(&self, pos:WorldVoxelPos, dims:&ChunkDims) -> Option<&V> {
         self.get_at_local(pos - self.origin_worldpos, dims)
@@ -477,6 +481,16 @@ impl<V:Voxel> MapChunk<V> {
             }
         }
         voxels
+    }
+    fn get_voxel_in_dir<'a>(&'a self, local_pos:WorldVoxelPos, surrounding_chunks:[Option<&'a MapChunk<V>> ; 6], dims:&ChunkDims, direction:usize) -> Option<&'a V> { 
+        let dir = EXPLORATION[direction];
+        match self.get_at_local(local_pos + dir, dims) {
+            Some(voxel) => Some(voxel),
+            None => match surrounding_chunks[direction] {
+                Some(chunk) => chunk.get_at_local(local_pos + dir + dims.get_add_to_other_local(direction), dims),
+                None => None
+            }
+        }
     }
     fn mark_for_remesh(&mut self) {
         self.mesh_updated = false;
@@ -510,6 +524,25 @@ impl<V:Voxel> MapChunk<V> {
             None => EMPTY_VOXEL
         }
     }
+    fn is_empty_in_direction_local<'a>(&self, pos:WorldVoxelPos, dims:&ChunkDims, chunks_around:[Option<&'a MapChunk<V>> ; 6], voxel_types:&Vec<V::VT>, direction:usize) -> bool {
+        let center = self.get_at_local(pos, dims);
+        match center {
+            Some(voxel) => {
+                let mut self_empty = voxel_types[voxel.voxel_id()].empty_coming_from(direction as u8, voxel.orientation());
+                if !self_empty {
+                    match self.get_voxel_in_dir(pos, chunks_around, dims, direction) {
+                        Some(vox_a) => self_empty || voxel_types[vox_a.voxel_id()].empty_coming_from(direction as u8, vox_a.orientation()),
+                        None => self_empty
+                    }
+                }   
+                else {
+                    self_empty
+                }
+                
+            },
+            None => true,
+        }
+    } 
     pub fn get_lights_local<'a>(&self, pos:WorldVoxelPos, dims:&ChunkDims, chunks_around:[Option<&'a MapChunk<V>> ; 6]) -> [VoxelLight ; 6] {
         let center = self.get_at_local(pos, dims);
         let voxels_around = self.get_voxels_around(pos, chunks_around, dims);
@@ -526,6 +559,13 @@ impl<V:Voxel> MapChunk<V> {
             None => ()
         }
         lights
+    }
+
+    pub fn get_light_in_dir_local<'a>(&self, pos:WorldVoxelPos, dims:&ChunkDims, chunks_around:[Option<&'a MapChunk<V>> ; 6], direction:usize) -> VoxelLight {
+        match self.get_voxel_in_dir(pos, chunks_around, dims, direction) {
+            Some(voxel) => voxel.light_level(),
+            None => VoxelLight::new(0, 0, 0, 0)
+        }
     }
     
 }
@@ -669,75 +709,83 @@ impl<V:Voxel, G:Generator<V>> GameMap<V, G> {
         }
         lod
     }
-    fn get_face_data_for_dir<'a>(
+
+    fn get_face_data_for_dir_first_pass(
+        &self,
+        (x,y,z):(i32,i32,i32),
+        (i,mask):(usize,u8),
+        chunk:&MapChunk<V>,
+        around:[Option<&MapChunk<V>> ; 6],
+        taken_dirs:&mut Vec<u8>,
+        effective_dirs:&mut [bool ; 6]
+    ) -> Option<(u32, (u8,u8,u8))> {
+        match chunk.get_at_local(Vec3D::new(x, y, z), &self.dims){
+            Some(voxel) => if !&self.voxel_types[voxel.voxel_id()].is_completely_empty() {
+                if chunk.is_empty_in_direction_local(Vec3D::new(x, y, z), &self.dims, around, &self.voxel_types, i) {
+                    let full_texture = self.voxel_types[voxel.voxel_id()].easy_texture() as u32;
+                    let light = chunk.get_light_in_dir_local(Vec3D::new(x, y, z), &self.dims, around, i);
+                    let mut level = (light.level.max(50) as f32) * 0.00392156862;
+                    let mut converted_collux = collux_u8_a_f32((light.r, light.g, light.b));
+                    let mut finished_collux = collux_f32_a_u8((converted_collux.0 * level, converted_collux.1 * level, converted_collux.2 * level));
+                    finished_collux = (finished_collux.0.max(self.min_light_levels.0), finished_collux.1.max(self.min_light_levels.1), finished_collux.2.max(self.min_light_levels.2));
+                    effective_dirs[i] = true;
+                    Some((full_texture, finished_collux))
+                }
+                else {
+                    None
+                }
+            }
+            else {
+                None
+            },
+            None => return None
+        }
+    }
+
+
+    fn get_face_data_for_dir(
         &self,
         (x,y,z):(i32,i32,i32),
         (i,mask):(usize,u8),
         scaler:&Vec3Df,
         chunk:&MapChunk<V>,
         around:[Option<&MapChunk<V>> ; 6],
-        step:i32,
-        taken_dirs:&mut Vec<u8>
+        (prev_step,step):(usize, i32),
+        taken_dirs:&mut Vec<u8>,
+        face_data:&mut Vec<[Option<(u32, (u8,u8,u8))> ; 6]>
     ) -> Option<(u32, (u8,u8,u8))> {
         
-            let lights = chunk.get_lights_local(Vec3D::new(x, y, z), &self.dims, around);
             let mut any_voxel_needs_face = false;
             let mut any_voxel_full = false;
             let mut full_texture = 0;
 
-            'outer : for dx in x..x+step {
-                for dy in y..y+step {
-                    for dz in z..z+step {
-                        match chunk.get_at_local(Vec3D::new(dx, dy, dz), &self.dims){
-                            Some(voxel) => if !&self.voxel_types[voxel.voxel_id()].is_completely_empty() {
-                                full_texture = self.voxel_types[voxel.voxel_id()].easy_texture() as u32;
-                                // assumes that all blocks with textures are full (currently all that's implemented anyway)
-                                any_voxel_full = true;
-
-                                let empty_dirs = chunk.get_empty_directions_local(Vec3D::new(dx, dy, dz), &self.dims, around, &self.voxel_types);
-                                if empty_dirs & mask == mask {
-                                    any_voxel_needs_face = true;
-                                    break 'outer;
-                                }
-                            },
-                            None => return None
+            'outer : for dx in (x..x+step).step_by(prev_step) {
+                for dy in (y..y+step).step_by(prev_step) {
+                    for dz in (z..z+step).step_by(prev_step) {
+                        if Vec3D::new(dx, dy, dz).in_origin_prism(self.dims.chunk_length_i, self.dims.chunk_width_i, self.dims.chunk_height_i) {
+                            if let Some(data) = face_data[dx as usize + (dy as usize * self.dims.chunk_length) + (dz as usize * self.dims.chunk_slice_area)][i] {
+                                return Some(data)
+                            }
+                        }
+                        else {
+                            return None
                         }
                         
                         
                     }
                 }
             }
-
-            if any_voxel_needs_face {
-                let mut points = TRIS_INDICES_UVS.0[i];
-                let mut level = (lights[i].level.max(50) as f32) / 255.0;
-                let mut converted_collux = collux_u8_a_f32((lights[i].r, lights[i].g, lights[i].b));
-                let mut finished_collux = collux_f32_a_u8((converted_collux.0 * level, converted_collux.1 * level, converted_collux.2 * level));
-                finished_collux = (finished_collux.0.max(self.min_light_levels.0), finished_collux.1.max(self.min_light_levels.1), finished_collux.2.max(self.min_light_levels.2));
-                if step == 1 {
-                    points = points + Vec3D::new(x as f32, y as f32, z as f32); 
-                }
-                else {
-                    points = points * *scaler + (Vec3D::new(x as f32, y as f32, z as f32)) + ((Vec3Df::all_ones() * 0.5).component_product(&scaler) - Vec3Df::all_ones() * 0.5);
-                }
-                Some((full_texture, finished_collux))
-            }
-            else {
-                None
-            }
+            None
         
     }
 
-    fn is_area_all_same_in_dir(&self, chunk:&MapChunk<V>, around:[Option<&MapChunk<V>> ; 6], step:i32, start:(i32,i32,i32), dir:usize, mask:u8, area:(i32, i32), scaler:&Vec3Df, taken_dirs:&mut Vec<u8>) -> Option<(u32, (u8,u8,u8))> {
+    fn is_area_all_same_in_dir_step_1(&self, chunk:&MapChunk<V>, around:[Option<&MapChunk<V>> ; 6], start:(i32,i32,i32), dir:usize, mask:u8, (area, area_start):((i32, i32), (i32,i32)), taken_dirs:&mut Vec<u8>, mut same:Option<(u32, (u8,u8,u8))>, effective_dirs:&mut [bool ; 6], face_data:&mut Vec<[Option<(u32, (u8,u8,u8))> ; 6]>) -> Option<(u32, (u8,u8,u8))> {
         
         let (mut first_dir, mut second_dir) = PERPENDICULAR[dir].clone();
-        first_dir *= step;
-        second_dir *= step;
-        let mut same = None;
-        for first in 0..area.0 {
-            for second in 0..area.1 {
+        for first in area_start.0..area.0 {
+            for second in area_start.1..area.1 {
                 let position = Vec3D::new(start.0, start.1, start.2) + first_dir * first + second_dir * second;
-                let value = self.get_face_data_for_dir((position.x, position.y, position.z), (dir, mask), scaler, chunk, around, step, taken_dirs);
+                let value = self.get_face_data_for_dir_first_pass((position.x, position.y, position.z), (dir, mask), chunk, around, taken_dirs, effective_dirs);
                 if same.is_none() {
                     same = value
                 }
@@ -746,16 +794,192 @@ impl<V:Voxel, G:Generator<V>> GameMap<V, G> {
                 }
             }
         }
-        for first in 0..area.0 {
-            for second in 0..area.1 {
+        for first in area_start.0..area.0 {
+            for second in area_start.1..area.1 {
                 let position = Vec3D::new(start.0, start.1, start.2) + first_dir * first + second_dir * second;
-                taken_dirs[(position.x as usize + (position.y as usize * self.dims.chunk_length) + (position.z as usize * self.dims.chunk_slice_area))] |= mask;
+                let index = (position.x as usize + (position.y as usize * self.dims.chunk_length) + (position.z as usize * self.dims.chunk_slice_area));
+                taken_dirs[index] |= mask;
+                face_data[index][dir] = same;
+
+            }
+        }
+        same
+    }
+
+    fn is_area_all_same_in_dir(&self, chunk:&MapChunk<V>, around:[Option<&MapChunk<V>> ; 6], (prev_step, step):(usize,i32), start:(i32,i32,i32), dir:usize, mask:u8, (area, area_start):((i32, i32), (i32,i32)), scaler:&Vec3Df, taken_dirs:&mut Vec<u8>, mut same:Option<(u32, (u8,u8,u8))>, face_data:&mut Vec<[Option<(u32, (u8,u8,u8))> ; 6]>) -> Option<(u32, (u8,u8,u8))> {
+        
+        let (mut first_dir, mut second_dir) = PERPENDICULAR[dir].clone();
+        first_dir *= step;
+        second_dir *= step;
+        for first in area_start.0..area.0 {
+            for second in area_start.1..area.1 {
+                let position = Vec3D::new(start.0, start.1, start.2) + first_dir * first + second_dir * second;
+                let value = self.get_face_data_for_dir((position.x, position.y, position.z), (dir, mask), scaler, chunk, around, (prev_step, step), taken_dirs, face_data);
+                if same.is_none() {
+                    same = value
+                }
+                else if same != value {
+                    return None;
+                }
+            }
+        }
+        for first in area_start.0..area.0 {
+            for second in area_start.1..area.1 {
+                let position = Vec3D::new(start.0, start.1, start.2) + first_dir * first + second_dir * second;
+                let index = (position.x as usize + (position.y as usize * self.dims.chunk_length) + (position.z as usize * self.dims.chunk_slice_area));
+                taken_dirs[index] |= mask;
+                face_data[index][dir] = same;
             }
         }
         same
     }
     
-    fn get_lod_with_step(&self, chunk:&MapChunk<V>, around:[Option<&MapChunk<V>> ; 6], step:i32) -> MeshLOD {
+    fn get_lod_with_1_step(&self, chunk:&MapChunk<V>, around:[Option<&MapChunk<V>> ; 6]) -> (MeshLOD, [bool ; 6], Vec<[Option<(u32, (u8,u8,u8))> ; 6]>) {
+        if let Some(voxel) = chunk.only_1_type.clone() && self.voxel_types[voxel.voxel_id()].is_completely_empty() {
+            (MeshLOD::new(Vec::new(), Vec::new(), Vec::new(), MeshTriangles::with_capacity(0)), [false ; 6], vec![])
+        }
+        else {
+            let mut x = Vec::with_capacity(600);
+            let mut y = Vec::with_capacity(600);
+            let mut z = Vec::with_capacity(600);
+            let mut triangles = MeshTriangles::with_capacity(600);
+            let mut lod = MeshLOD::new(x, y, z, triangles);
+            let mut taken_dirs = vec![0 ; self.dims.chunk_height * self.dims.chunk_length * self.dims.chunk_width];
+            let mut kept_dirs = Vec::with_capacity(6);
+            let mut effective_dirs = [false ; 6];
+            let mut face_data_vec = vec![[None ; 6] ; self.dims.chunk_height * self.dims.chunk_length * self.dims.chunk_width];
+            let scaler = Vec3Df::all_ones();
+            if let Some(voxel) = chunk.only_1_type.clone() && !self.voxel_types[voxel.voxel_id()].is_completely_empty() {
+                for (i, ch) in around.iter().enumerate() {
+                    if let Some(chunk2) = ch {
+                        if let Some(voxel) = chunk2.only_1_type.clone() && self.voxel_types[voxel.voxel_id()].is_completely_empty() {
+                            kept_dirs.push((i, DIR_MASK[i]));
+                            effective_dirs[i] = true;
+                        }
+                        else if let None = chunk2.only_1_type.clone() {
+                            kept_dirs.push((i, DIR_MASK[i]));
+                            effective_dirs[i] = true;
+                        }
+                    }
+                }
+            }
+            else {
+                for (i, ch) in around.iter().enumerate() {
+                    kept_dirs.push((i, DIR_MASK[i]));
+                }
+            }
+            
+            println!("Started {} {} {}", chunk.chunk_coord.x, chunk.chunk_coord.y, chunk.chunk_coord.z);
+            for x in 0..self.dims.chunk_length_i {
+                for y in 0..self.dims.chunk_width_i {
+                    for z in 0..self.dims.chunk_height_i {
+                        for (i, mask) in kept_dirs.iter() {
+                            if taken_dirs[(x as usize + (y as usize * self.dims.chunk_length) + (z as usize * self.dims.chunk_slice_area))] & *mask == *mask {
+                                continue
+                            }
+                            else {
+                                let mut first_dir_greed = 1;
+                                let mut second_dir_greed = 1;
+                                let mut face_data = self.is_area_all_same_in_dir_step_1(chunk, around, (x,y,z), *i, *mask, ((first_dir_greed, second_dir_greed), (0, 0)), &mut taken_dirs, None, &mut effective_dirs, &mut face_data_vec);
+
+                                while (first_dir_greed + 1) < self.dims.chunk_height_i && (second_dir_greed + 1) < self.dims.chunk_height_i && face_data.is_some() {
+                                    
+                                    //println!("{} {} {}", first_dir_greed, second_dir_greed, step);
+                                    let mut first_test_face = self.is_area_all_same_in_dir_step_1(chunk, around, (x,y,z), *i, *mask, ((first_dir_greed + 1, second_dir_greed), (first_dir_greed, 0)), &mut taken_dirs, face_data, &mut effective_dirs, &mut face_data_vec);
+                                    if first_test_face.is_some() {
+                                        first_dir_greed += 1;
+                                    }
+
+                                    let mut second_test_face = self.is_area_all_same_in_dir_step_1(chunk, around, (x,y,z), *i, *mask, ((first_dir_greed, second_dir_greed + 1), (0, second_dir_greed)), &mut taken_dirs, face_data, &mut effective_dirs, &mut face_data_vec);
+                                    if second_test_face.is_some() {
+                                        second_dir_greed += 1;
+                                    }
+                                    if first_test_face.is_none() && second_test_face.is_none() {
+                                        break;
+                                    }
+                                }
+                                match face_data {
+                                    Some((full_texture, finished_collux)) => {
+                                        let u_s = first_dir_greed as f32;
+                                        let v_s = second_dir_greed as f32;
+                                        let (mut f_dir, mut s_dir) = PERPENDICULAR[*i].clone();
+                                        let scaler = multiply_corresponding_nonzero(multiply_corresponding_nonzero(scaler, Vec3D::new(f_dir.x as f32, f_dir.y as f32, f_dir.z as f32) * u_s), Vec3D::new(s_dir.x as f32, s_dir.y as f32, s_dir.z as f32) * v_s);
+
+                                        let start_index = lod.x.len();
+                                        let indices = TRIS_INDICES_UVS.1;
+                                        let uvs = TRIS_INDICES_UVS.2;
+                                        let mut points = TRIS_INDICES_UVS.0[*i];
+                                        points = points * scaler + (Vec3D::new(x as f32, y as f32, z as f32)) + ((Vec3Df::all_ones() * 0.5).component_product(&scaler) - Vec3Df::all_ones() * 0.5);
+                                        lod.add_points(&points);
+                                        lod.triangles.add_triangle(
+                                            TrianglePoint::new(
+                                                indices[0] + start_index,
+                                                uvs[indices[0]].0 * u_s,
+                                                uvs[indices[0]].1 * v_s,
+                                                finished_collux.0,
+                                                finished_collux.1,
+                                                finished_collux.2
+                                            ),
+                                            TrianglePoint::new(
+                                                indices[1] + start_index,
+                                                uvs[indices[1]].0 * u_s,
+                                                uvs[indices[1]].1 * v_s,
+                                                finished_collux.0,
+                                                finished_collux.1,
+                                                finished_collux.2
+                                            ),
+                                            TrianglePoint::new(
+                                                indices[2] + start_index,
+                                                uvs[indices[2]].0 * u_s,
+                                                uvs[indices[2]].1 * v_s,
+                                                finished_collux.0,
+                                                finished_collux.1,
+                                                finished_collux.2
+                                            ),
+                                            full_texture, 
+                                            0
+                                        );
+                                        lod.triangles.add_triangle(
+                                            TrianglePoint::new(
+                                                indices[3] + start_index,
+                                                uvs[indices[3]].0 * u_s,
+                                                uvs[indices[3]].1 * v_s,
+                                                finished_collux.0,
+                                                finished_collux.1,
+                                                finished_collux.2
+                                            ),
+                                            TrianglePoint::new(
+                                                indices[4] + start_index,
+                                                uvs[indices[4]].0 * u_s,
+                                                uvs[indices[4]].1 * v_s,
+                                                finished_collux.0,
+                                                finished_collux.1,
+                                                finished_collux.2
+                                            ),
+                                            TrianglePoint::new(
+                                                indices[5] + start_index,
+                                                uvs[indices[5]].0 * u_s,
+                                                uvs[indices[5]].1 * v_s,
+                                                finished_collux.0,
+                                                finished_collux.1,
+                                                finished_collux.2
+                                            ),
+                                            full_texture, 
+                                            0
+                                        );
+                                    },
+                                    None => ()
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            (lod, effective_dirs, face_data_vec)
+        }
+        
+    }
+    fn get_lod_with_step(&self, chunk:&MapChunk<V>, around:[Option<&MapChunk<V>> ; 6], (prev_step, step):(usize, i32), effective_dirs:[bool ; 6], vec_face_data:&mut Vec<[Option<(u32, (u8,u8,u8))> ; 6]>) -> MeshLOD {
         if let Some(voxel) = chunk.only_1_type.clone() && self.voxel_types[voxel.voxel_id()].is_completely_empty() {
             MeshLOD::new(Vec::new(), Vec::new(), Vec::new(), MeshTriangles::with_capacity(0))
         }
@@ -769,7 +993,7 @@ impl<V:Voxel, G:Generator<V>> GameMap<V, G> {
             let float_step = step as f32;
             let mut taken_dirs = vec![0 ; self.dims.chunk_height * self.dims.chunk_length * self.dims.chunk_width];
             let mut kept_dirs = Vec::with_capacity(6);
-            if let Some(voxel) = chunk.only_1_type.clone() {
+            if let Some(voxel) = chunk.only_1_type.clone() && !self.voxel_types[voxel.voxel_id()].is_completely_empty() {
                 for (i, ch) in around.iter().enumerate() {
                     if let Some(chunk2) = ch {
                         if let Some(voxel) = chunk2.only_1_type.clone() && self.voxel_types[voxel.voxel_id()].is_completely_empty() {
@@ -783,16 +1007,7 @@ impl<V:Voxel, G:Generator<V>> GameMap<V, G> {
             }
             else {
                 for (i, ch) in around.iter().enumerate() {
-                    if let Some(chunk2) = ch {
-                        
-                        if let Some(voxel) = chunk2.only_1_type.clone() && self.voxel_types[voxel.voxel_id()].is_completely_empty() {
-                            kept_dirs.push((i, DIR_MASK[i]));
-                        }
-                        else if let None = chunk2.only_1_type.clone() {
-                            kept_dirs.push((i, DIR_MASK[i]));
-                        }
-                    }
-                    else {
+                    if effective_dirs[i] {
                         kept_dirs.push((i, DIR_MASK[i]));
                     }
                 }
@@ -812,17 +1027,17 @@ impl<V:Voxel, G:Generator<V>> GameMap<V, G> {
                             else {
                                 let mut first_dir_greed = 1;
                                 let mut second_dir_greed = 1;
-                                let mut face_data = self.is_area_all_same_in_dir(chunk, around, step, (x,y,z), *i, *mask, (first_dir_greed, second_dir_greed), &scaler, &mut taken_dirs);
+                                let mut face_data = self.is_area_all_same_in_dir(chunk, around, (prev_step, step), (x,y,z), *i, *mask, ((first_dir_greed, second_dir_greed), (0, 0)), &scaler, &mut taken_dirs, None, vec_face_data);
 
                                 while (first_dir_greed + 1) * step < self.dims.chunk_height_i && (second_dir_greed + 1) * step < self.dims.chunk_height_i && face_data.is_some() {
                                     
                                     //println!("{} {} {}", first_dir_greed, second_dir_greed, step);
-                                    let mut first_test_face = self.is_area_all_same_in_dir(chunk, around, step, (x,y,z), *i, *mask, (first_dir_greed + 1, second_dir_greed), &scaler, &mut taken_dirs);
+                                    let mut first_test_face = self.is_area_all_same_in_dir(chunk, around, (prev_step, step), (x,y,z), *i, *mask, ((first_dir_greed + 1, second_dir_greed), (first_dir_greed, 0)), &scaler, &mut taken_dirs, face_data, vec_face_data);
                                     if first_test_face.is_some() {
                                         first_dir_greed += 1;
                                     }
 
-                                    let mut second_test_face = self.is_area_all_same_in_dir(chunk, around, step, (x,y,z), *i, *mask, (first_dir_greed, second_dir_greed + 1), &scaler, &mut taken_dirs);
+                                    let mut second_test_face = self.is_area_all_same_in_dir(chunk, around, (prev_step, step), (x,y,z), *i, *mask, ((first_dir_greed, second_dir_greed + 1), (0, second_dir_greed)), &scaler, &mut taken_dirs, face_data, vec_face_data);
                                     if second_test_face.is_some() {
                                         second_dir_greed += 1;
                                     }
@@ -1057,6 +1272,51 @@ impl<V:Voxel, G:Generator<V>> GameMap<V, G> {
     pub fn get_voxel_types(&self) -> &Vec<V::VT> {
         &self.voxel_types
     }
+
+    pub fn full_collision(&self, pos:Vec3Df, speed_nudge:Vec3Df) -> Option<Collision<V>> {
+        self.generator.full_collision(pos, speed_nudge).or_else(|| {
+            match self.get_voxel_at(get_voxel_pos(pos)) {
+                Some(voxel) => Some(Collision { surface_normal: Vec3Df::new(0.0, 0.0, 1.0), minimum_nudge: get_minimum_nudge(pos, speed_nudge, self), voxel: voxel.clone(), position:pos }),
+                None => None
+            }
+        })
+    }
+    pub fn simple_collision(&self, pos:Vec3Df) -> bool {
+        self.generator.simple_collision(pos) || self.is_voxel_solid(get_voxel_pos(pos))
+    }
+}
+
+
+pub fn get_minimum_nudge<V:Voxel, G:Generator<V>>(end:Vec3Df, nudge:Vec3Df, world:&GameMap<V, G>) -> Vec3Df {
+    let xy_zeroed_out = end + Vec3Df::new(0.0, 0.0, nudge.z);
+    if world.is_voxel_solid(get_voxel_pos(xy_zeroed_out)) {
+        let stepped_z_nudge = end + Vec3Df::new(0.0, 0.0, nudge.z + 1.0);
+        if world.is_voxel_solid(get_voxel_pos(stepped_z_nudge)) {
+            let x_zeroed = end + Vec3Df::new(0.0, nudge.y, nudge.z);
+            let y_zeroed = end + Vec3Df::new(nudge.x, 0.0, nudge.z);
+            let z_zeroed = end + Vec3Df::new(nudge.x, nudge.y, 0.0);
+            if !world.is_voxel_solid(get_voxel_pos(x_zeroed)) {
+                Vec3Df::new(0.0, nudge.y, nudge.z)
+            }
+            else if !world.is_voxel_solid(get_voxel_pos(y_zeroed)) {
+                Vec3Df::new(nudge.x, 0.0, nudge.z)
+            }
+            else if !world.is_voxel_solid(get_voxel_pos(z_zeroed)) {
+                Vec3Df::new(nudge.x, nudge.y, 0.0)
+            }
+            else {
+                nudge
+            }
+        }
+        else {
+            Vec3Df::new(0.0, 0.0, nudge.z + 0.5)
+        }
+        
+        
+    }
+    else {
+        Vec3Df::new(0.0, 0.0, nudge.z)
+    }
 }
 
 pub fn get_voxel_pos(pos:Vec3Df) -> WorldVoxelPos {
@@ -1084,5 +1344,17 @@ pub fn get_f64_pos(pos:WorldVoxelPos) -> Vec3D<f64> {
 }
 
 pub trait Generator<V:Voxel>: Clone + ToBytes + FromBytes + PartialEq {
+    const PROVIDES_COLLISION:bool;
     fn generate(&self, pos:WorldVoxelPos) -> V;
+    fn simple_collision(&self, pos:Vec3Df) -> bool {
+        self.full_collision(pos, Vec3Df::zero()).is_some()
+    }
+    fn full_collision(&self, pos:Vec3Df, speed_nudge:Vec3Df) -> Option<Collision<V>>;
+}
+
+pub struct Collision<V:Voxel> {
+    pub surface_normal:Vec3Df,
+    pub minimum_nudge:Vec3Df,
+    pub position:Vec3Df,
+    pub voxel:V
 }

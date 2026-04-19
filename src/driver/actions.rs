@@ -9,7 +9,8 @@ pub struct Action {
     started_at:usize, // tick this was started at
     timer:ActionTimer,
     kind:ActionKind,
-    source:ActionSource
+    source:ActionSource,
+    sequential:bool
 }
 #[derive(Clone, ToBytes, FromBytes, PartialEq, Debug)]
 pub enum ActionSource {
@@ -19,7 +20,11 @@ pub enum ActionSource {
 
 impl Action {
     pub fn new(id:usize, started_at:usize, timer:ActionTimer, kind:ActionKind, source:ActionSource) -> Self {
-        Self { id, started_at, timer, kind, source }
+        Self { id, started_at, timer, kind, source, sequential:true }
+    }
+    pub fn make_parallel(mut self) -> Self {
+        self.sequential = false;
+        self
     }
     pub fn get_kind(&self) -> &ActionKind {
         &self.kind
@@ -202,7 +207,7 @@ impl Action {
                         first_ent.tunnels.actions_out.send(GameEntityEvent::new(MustSync::Server,ActionsEvent { id: agent_id, source: None, variant: ActionsUpdate::RemoveAction(self.id)}));
                         match stats.personal_vehicle {
                             Some(vehicle) => {
-                                dbg!(other.clone());
+                                // dbg!(other.clone());
                                 second_ent.tunnels.locomotion_out.send(VehicleEntityEvent::new(MustSync::Server, LocomotionEvent::new(vehicle, Some(CoolGameEngineTID::entity_1(agent_id)), LocomotionUpdate::AddAction(self.clone(), ActionResult::Done)))).unwrap();
                                 ActionResult::Done
                             },
@@ -302,10 +307,11 @@ impl Actions {
         second_ent:&VehicleEntityVecRead<'a, CoolGameEngineTID>,
         world:&WorldComputeHandler<GameMap<CoolVoxel, Road>, CoolGameEngineTID>,
         counter:&mut ActionCounter,
-        tick:usize
+        tick:usize,
+        start_with:usize
     ) {
-        if self.all_actions.len() > 0 {
-            let action = &self.all_actions[0];
+        if self.all_actions.len() > start_with {
+            let action = &self.all_actions[start_with];
             let result = action.perform(agent_id, first_ent, second_ent, world, counter, tick);
             match &result {
                 ActionResult::InProgress => (),
@@ -313,6 +319,9 @@ impl Actions {
                     ActionSource::Planner => first_ent.tunnels.planner_out.send(GameEntityEvent::new(MustSync::Server,PlannerEvent::new(agent_id, None, PlannerUpdate::AddFinished((action.clone(), result))))).unwrap(),
                     ActionSource::Director => first_ent.tunnels.director_out.send(GameEntityEvent::new(MustSync::Server,DirectorEvent::new(agent_id, None, DirectorUpdate::NotifyFinished((action.clone(), result))))).unwrap(),
                 }
+            }
+            if !action.sequential {
+                self.perform(agent_id, first_ent, second_ent, world, counter, tick, start_with+1);
             }
         }
     }
@@ -361,6 +370,7 @@ impl<ID:Identify> ComponentEvent<Actions, ID> for ActionsEvent<ID> {
             },
             ActionsUpdate::InsertActionAtStart(action) => components[self.id].all_actions.insert(0,action),
             ActionsUpdate::UpdateAllActions(new_actions) => components[self.id].all_actions = new_actions,
+            ActionsUpdate::FlushActions => components[self.id].all_actions.clear(),
         }
     }  
 }
@@ -370,7 +380,8 @@ pub enum ActionsUpdate {
     AddAction(Action),
     InsertActionAtStart(Action),
     UpdateAllActions(Vec<Action>),
-    RemoveAction(usize) // action id
+    RemoveAction(usize), // action id
+    FlushActions 
 }
 
 impl<ID:Identify> Component<ID> for Actions {

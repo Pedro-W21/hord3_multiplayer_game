@@ -265,7 +265,9 @@ impl LLMDirector {
                 vec![
                     ChatSetting::ResponseTokenLimit(3000),
                     ChatSetting::Temperature(90)
-                ])) 
+                ])),
+                access_mode:0,
+                chat_id:None
             }
         )
 

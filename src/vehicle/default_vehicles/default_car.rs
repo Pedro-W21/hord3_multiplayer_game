@@ -64,20 +64,19 @@ fn get_default_loco_equips(aabb:AABB) -> Vec<StaticLocomotionEquipment> {
             ActivationRequirements::new(
                 vec![
                     ActivationRequirement::SurfaceContact(SurfaceType::Ground),
-                    ActivationRequirement::DriverAction(DriverAction::Throttle { from: -1.0, to: 1.0 })
+                    ActivationRequirement::DriverAction(DriverAction::Throttle { from: -1.0, to: 10.0 })
                 ],
                 ActivationOutput::ActivateMotion,
             ),
             ActivationRequirements::new(
                 vec![
-                    ActivationRequirement::SurfaceContact(SurfaceType::Ground),
                     ActivationRequirement::DriverAction(DriverAction::HorizontalReorientation { from: -1.0, to: 1.0 })
                 ],
                 ActivationOutput::Turn(Coord::Z),
             ),
         ],
         resting_local_position:aabb.get_ground_vertices()[0],
-        max_self_rotation:Orientation::new(PI/3.0, 0.0, 0.0),
+        max_self_rotation:Orientation::new(PI/12.0, 0.0, 0.0),
         motion:EqMotion {
             kind:EqMotionKind::Switch,
             forward_vector:Vec3Df::new(1.0, 0.0, 0.0),

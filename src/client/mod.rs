@@ -22,7 +22,7 @@ pub mod client_tasks;
 
 pub fn client_func() {
     let mut world = GameMap::new(100, ChunkDims::new(8, 8, 8), get_tile_voxels(), (255,255,255), 1, Road::new(Vec3D::zero(), Vec3Df::new(1.0, 0.0, 0.0)));
-    let mut perlin = Perlin::new().set_seed(13095);
+    let mut perlin = Perlin::new(13095);
     let mut world_height = 15.0;
     let mut water_level = 10.0;
     let start = Vec3D::new(-6, -5, -2);
@@ -387,7 +387,7 @@ pub fn client_func() {
             *vectorinator.shader_data.fog_color.write().unwrap() = rgb_to_argb(new_fog_col);
             let read = engine.entity_1.get_read();
             let tick = engine.extra_data.tick.fetch_add(1, Ordering::Relaxed);
-            let new_camera = input_handler.get_new_camera(&read, tick);
+            let new_camera = input_handler.get_new_camera(&read, &engine.vehicles.get_read(), tick);
             *writer.camera = new_camera.clone();//(i as f32 / 500.0) * PI/2.0));
             engine.extra_data.current_render_data.write().unwrap().0 = new_camera.clone();
 
@@ -426,8 +426,8 @@ pub fn client_func() {
         let frametime = Instant::now().checked_duration_since(start).unwrap().as_secs_f64();
         let mut fps = 1.0/frametime;
         println!("FPS : {}", fps);
-        if fps > 80.0 {
-            thread::sleep(Duration::from_secs_f64(1.0/(70.0) - frametime));
+        if fps > 100.0 {
+            thread::sleep(Duration::from_secs_f64(1.0/(90.0) - frametime));
         }
     }
     scheduler.end_threads();

@@ -3,7 +3,7 @@ use std::{collections::HashMap, fmt::Debug, sync::{LazyLock, mpmc::Sender}};
 use hord3::horde::{game_engine::{entity::{Component, ComponentEvent, SimpleComponentEvent, StaticComponent}, multiplayer::{Identify, MustSync}, world::WorldComputeHandler}, geometry::{rotation::{Orientation, Rotation}, vec3d::{Coord, Vec3Df}}};
 use to_from_bytes_derive::{FromBytes, ToBytes};
 
-use crate::{driver::{actions::{Action, ActionKind, ActionResult}, colliders::BoundingCollider}, game_engine::{AIR_RESISTANCE, CoolGameEngineTID, CoolVoxel, GRAVITY, TURN_RESISTANCE, get_nudge_to_nearest_next_whole}, game_map::{GameMap, VoxelLight, VoxelType, get_voxel_pos, raycaster::{Curve, Ray}, road::Road}, vehicle::{StaticVehicleEntity, VehicleEntityEvent, hull::HullUpdate, position::{VehiclePosEvent, VehiclePosUpdate, VehiclePosition}, vehicle_stats::VehicleStats}};
+use crate::{driver::{actions::{Action, ActionKind, ActionResult}, colliders::BoundingCollider}, game_engine::{AIR_RESISTANCE, CoolGameEngineTID, CoolVoxel, GRAVITY, TURN_RESISTANCE, get_nudge_to_nearest_next_whole}, game_map::{GameMap, VoxelLight, VoxelType, get_minimum_nudge, get_voxel_pos, raycaster::{Curve, Ray, get_closest_ground_collision_to}, road::Road}, vehicle::{StaticVehicleEntity, VehicleEntityEvent, hull::HullUpdate, position::{VehiclePosEvent, VehiclePosUpdate, VehiclePosition}, vehicle_stats::VehicleStats}};
 
 static DEFAULT_COEFS:LazyLock<HashMap<(SurfaceType, SurfaceSubType), SurfaceCoefs>> = LazyLock::new(|| {HashMap::from([
     ((SurfaceType::Ground, SurfaceSubType::Industrial), SurfaceCoefs::new(0.9, 0.9)),
@@ -67,8 +67,8 @@ impl Locomotion {
                 }
             }
             if v_turn_spd_chng != Orientation::zero() {
-                dbg!(v_turn_spd_chng);
-                dbg!(vehicle_turn_spd_change);
+                //dbg!(v_turn_spd_chng);
+                //dbg!(vehicle_turn_spd_change);
             }
             vehicle_spd_change += vehicle_rotat.rotate(v_spd_chng);
             vehicle_turn_spd_change += v_turn_spd_chng;
@@ -82,8 +82,7 @@ impl Locomotion {
         let mut final_spd_add = Vec3Df::zero();
         if on_ground_eqs.len() > 0 && total_ground_spd.norme_square() > 0.000001 {
             let divided_spd = total_ground_spd/on_ground_eqs.len() as f32;
-            let dot = dbg!(vehicle_rotat.rotate(Vec3Df::new(1.0, 0.0, 0.0))).dot(&divided_spd.normalise());
-            dbg!(dot);
+            let dot = vehicle_rotat.rotate(Vec3Df::new(1.0, 0.0, 0.0)).dot(&divided_spd.normalise());
             let new_spd = Vec3Df::new(1.0, 0.0, 0.0) * divided_spd.norme() * (1.0 - dot.abs()) * dot.signum();
             final_spd_add += total_ground_spd * -(1.0 - dot.abs());
             for (ground, surface) in on_ground_eqs.iter().zip(surfaces.iter()) {
@@ -121,7 +120,7 @@ impl Locomotion {
         let mut total_ground_spd_add = Vec3Df::zero();
         let mut total_nonground_spd_add = Vec3Df::zero();
         let mut total_nonzero = 0;
-        dbg!(new_vehicle_turn_spd);
+        //dbg!(new_vehicle_turn_spd);
         for eq in &self.equipment {
             let (spd_add, turn_spd_add, got_ground) = eq.collide_with_world(&static_locomotion.equipment[eq.static_equipment], world, vehicle_stats, vehicle_position);
             
@@ -137,7 +136,7 @@ impl Locomotion {
         if total_nonzero > 0 {
             total_ground_spd_add *= 1.0/total_nonzero as f32;
         }
-        dbg!(new_vehicle_turn_spd);
+        //dbg!(new_vehicle_turn_spd);
         new_vehicle_spd += total_ground_spd_add + total_nonground_spd_add;
         new_vehicle_turn_spd.yaw *= AIR_RESISTANCE * TURN_RESISTANCE;
         new_vehicle_turn_spd.pitch *= AIR_RESISTANCE * TURN_RESISTANCE;
@@ -268,6 +267,7 @@ impl LocomotionEquipment {
                                     DriverAction::Throttle { from, to } => {
                                         any_action_compatible = any_action_compatible || (*value >= *from && *value <= *to);
                                         if any_action_compatible {
+                                            println!("CONFIRM THROTTLING WITH {}", *value);
                                             strength = *value;
                                         }
                                     },
@@ -297,12 +297,13 @@ impl LocomotionEquipment {
                         let ray = Ray::new(vehicle_rotation.rotate(self.current_local_position) + vehicle_position.pos, static_type.down_dir.map_or(Vec3Df::new(0.0, 0.0, -1.0), |vec| {vehicle_rotation.rotate(self_rotation.rotate(vec))}), Some(*to));
                         let end = ray.get_end(&world);
                         if end.final_length >= *from && end.final_length <= *to {
-                            match world.get_type_of_voxel_at(get_voxel_pos(end.end - vehicle_position.pos)) {
-                                Some(voxel_type) => {
-                                    possible = possible && voxel_type.surface_type == *surface_type;
-                                    surface = (voxel_type.surface_type, voxel_type.surface_subtype);
-                                },
-                                None => possible = false
+                            if let Some(collision) = world.full_collision(end.end, Vec3Df::zero()) {
+                                let voxel_type = &world.get_voxel_types()[collision.voxel.voxel_type as usize];
+                                possible = possible && voxel_type.surface_type == *surface_type;
+                                surface = (voxel_type.surface_type, voxel_type.surface_subtype);
+                            }
+                            else {
+                                possible = false;
                             }
                         }
                     },
@@ -311,19 +312,20 @@ impl LocomotionEquipment {
 
                         let self_rotation = Rotation::from_orientation(self.current_local_orient);
                         let vehicle_rotation = Rotation::from_orientation(vehicle_position.orientation);
-                        let ray = Ray::new(vehicle_rotation.rotate(self.current_local_position) + vehicle_position.pos, static_type.down_dir.map_or(Vec3Df::new(0.0, 0.0, -1.0), |vec| {vehicle_rotation.rotate(self_rotation.rotate(vec))}), Some(100.0));
-                        let end = ray.get_end(&world);
-                        match world.get_type_of_voxel_at(get_voxel_pos(end.end)) {
-                            Some(voxel_type) => {
-                                surface = (voxel_type.surface_type, voxel_type.surface_subtype);
-                                if self.current_collider.rotate_around_origin(&vehicle_rotation).point_inside(end.end - vehicle_position.pos) {
-                                    possible = possible && voxel_type.surface_type == *surface_type;
-                                }
-                                else {
-                                    possible = false;
-                                }
-                            },
-                            None => possible = false
+                        let potential_collision = get_closest_ground_collision_to(vehicle_rotation.rotate(self.current_local_position) + vehicle_position.pos, &world);
+                        if let Some(collision) = potential_collision {
+                            let voxel_type = &world.get_voxel_types()[collision.voxel.voxel_type as usize];
+                            surface = (voxel_type.surface_type, voxel_type.surface_subtype);
+                            if self.current_collider.rotate_around_origin(&vehicle_rotation).point_inside(collision.position - vehicle_position.pos) {
+                                possible = possible && voxel_type.surface_type == *surface_type;
+                                //dbg!(possible);
+                            }
+                            else {
+                                possible = false;
+                            }
+                        }
+                        else {
+                            possible = false;
                         }
                     },
                 }
@@ -364,9 +366,6 @@ impl LocomotionEquipment {
                     Coord::Y => rotated.y = 0.0,
                     Coord::Z => rotated.z = 0.0
                 }
-                if rotated.norme() > 0.01 {
-                    rotated = rotated.normalise();
-                }
                 rotated
             },
             MotionApplication::WorldCoords => {
@@ -377,6 +376,7 @@ impl LocomotionEquipment {
             }
         };
         rotated_motion_vector.zero_out_nans();
+        //dbg!(strength, rotated_motion_vector);
         match static_type.motion.application_point {
             ApplicationPoint::CenterOfEquipment => {
                 let ap = self.current_local_position;
@@ -427,6 +427,7 @@ impl LocomotionEquipment {
         let mut vehicle_turn_spd_add = Orientation::zero();
         let mut self_clone = self.clone();
         let mut surface = None;
+        let mut turned = false;
         for activated in self.can_activate(static_type, world, vehicle_stats, vehicle_position, driver_actions) {
             surface = Some(activated.surface);
             let coefs = static_type.get_coefs_for(activated.surface);
@@ -435,24 +436,27 @@ impl LocomotionEquipment {
                     let (spd_add, turn_spd_add, factor) = self_clone.compute_vehicle_speed_vector_and_turn_spd_change(static_type, world, vehicle_stats, vehicle_position, activated.strength, static_type.motion.forward_vector, static_type.motion.motion_application.clone());
                     vehicle_spd_add += spd_add * coefs.spd_drag_coefficient;
                     vehicle_turn_spd_add += turn_spd_add * coefs.turn_spd_drag_coefficient;
-                    dbg!(spd_add, turn_spd_add);
+                    //dbg!(spd_add, turn_spd_add);
                 },
                 ActivationOutput::Turn(axis) => {
+                    turned = true;
                     let orient_change = self_clone.compute_turn_speed_change(axis, activated.strength);
                     self_clone.current_local_turn_speed += orient_change;
-                    dbg!(orient_change);
+                    //dbg!(orient_change);
                 }
             }
+        }
+
+        if !turned {
+            if self_clone.current_local_orient.yaw.abs() < 0.0001 && self_clone.current_local_orient.pitch.abs() < 0.0001 && self_clone.current_local_orient.roll.abs() < 0.0001 {
+                self_clone.current_local_orient = Orientation::zero();
+            }
+            self_clone.current_local_turn_speed += self_clone.current_local_orient * -0.1;
         }
         self_clone.current_local_orient = self_clone.compute_new_self_orient(static_type);
         self_clone.current_local_turn_speed.yaw *= 0.1;
         self_clone.current_local_turn_speed.pitch *= 0.1;
         self_clone.current_local_turn_speed.roll *= 0.1;
-        if vehicle_spd_add != Vec3Df::zero() {
-            //dbg!(vehicle_spd_add);
-            //dbg!(self_clone.current_local_turn_speed);
-            //dbg!(self_clone.current_local_orient);
-        }
         (self_clone, vehicle_spd_add, vehicle_turn_spd_add, surface)
     }
     pub fn compute_on_ground_if_relevant(&self,
@@ -471,13 +475,9 @@ impl LocomotionEquipment {
             //dbg!(ray.get_start() - vehicle_position.pos);
             //dbg!(end.end - vehicle_position.pos);
             //dbg!(self.current_collider.rotate_around_origin(&vehicle_rotation));
-            match world.get_type_of_voxel_at(get_voxel_pos(end.end)) {
-                Some(voxel_type) => {
-                    if self.current_collider.rotate_around_origin(&vehicle_rotation).point_inside(end.end - vehicle_position.pos) {
-                        on_ground = voxel_type.surface_type == surface_type.clone();
-                    }
-                },
-                None => ()
+            if let Some(collision) = world.full_collision(end.end, Vec3Df::zero()) && self.current_collider.rotate_around_origin(&vehicle_rotation).point_inside(end.end - vehicle_position.pos){
+                let voxel_type = &world.get_voxel_types()[collision.voxel.voxel_type as usize];
+                on_ground = voxel_type.surface_type == surface_type.clone();
             }
             Some(on_ground)
         }
@@ -511,20 +511,13 @@ impl LocomotionEquipment {
             }
             else {
                 println!("NOT GRAVITY ON {} with ray len {} and diff len {}", self.static_equipment, end.final_coef, diff_len);
-                match world.get_type_of_voxel_at(get_voxel_pos(end.end)) {
-                    Some(voxel_type) => {
+                let mut speed_nudge = diff_vector * -(1.0 - end.final_coef);
+                match world.full_collision(end.end, speed_nudge) {
+                    Some(collision) => {
+                        let voxel_type = &world.get_voxel_types()[collision.voxel.voxel_type as usize];
                         if self.current_collider.rotate_around_origin(&vehicle_rotation).point_inside(end.end - vehicle_position.pos) && voxel_type.surface_type == surface_type.clone() {
-                            //let (speed_nudge, vertical, pos_nudge) = compute_nudges_from(end.end, Vec3Df::zero(), world, true);
-                            let mut speed_nudge = diff_vector * -(1.0 - end.final_coef);
-                            speed_nudge = get_minimum_nudge(end.end, speed_nudge, world);
-                            let (spd_add, turn_spd_add, factor) = self.compute_vehicle_speed_vector_and_turn_spd_change(static_type, world, vehicle_stats, vehicle_position, speed_nudge.norme(), speed_nudge.normalise(), MotionApplication::RotateAgainstVehicle);
-                            //let new_rotation = Rotation::from_orientation(vehicle_position.orientation + vehicle_position.turn_spd + turn_spd_add);
-                            //let next_pos_old_turn = vehicle_position.pos + vehicle_next_rotation.rotate(self.current_local_position) + vehicle_position.spd + speed_nudge;
-                            //let next_pos_new_turn = vehicle_position.pos + new_rotation.rotate(self.current_local_position) + vehicle_position.spd + speed_nudge;
-                            //speed_nudge += next_pos_new_turn - next_pos_old_turn;
-                            //speed_nudge = get_minimum_nudge(end.end, speed_nudge, world);
-                            //dbg!(speed_nudge, turn_spd_add, factor);
-                            (speed_nudge, turn_spd_add, true)
+                            let (spd_add, turn_spd_add, factor) = self.compute_vehicle_speed_vector_and_turn_spd_change(static_type, world, vehicle_stats, vehicle_position, collision.minimum_nudge.norme(), collision.minimum_nudge.normalise(), MotionApplication::RotateAgainstVehicle);
+                            (collision.minimum_nudge, turn_spd_add, true)
                         }
                         else {
                             (Vec3Df::zero(), Orientation::zero(), false)
@@ -543,37 +536,6 @@ impl LocomotionEquipment {
 
 }
 
-pub fn get_minimum_nudge(end:Vec3Df, nudge:Vec3Df, world:&GameMap<CoolVoxel, Road>) -> Vec3Df {
-    let xy_zeroed_out = end + Vec3Df::new(0.0, 0.0, nudge.z);
-    if world.is_voxel_solid(get_voxel_pos(xy_zeroed_out)) {
-        let stepped_z_nudge = end + Vec3Df::new(0.0, 0.0, nudge.z + 1.0);
-        if world.is_voxel_solid(get_voxel_pos(stepped_z_nudge)) {
-            let x_zeroed = end + Vec3Df::new(0.0, nudge.y, nudge.z);
-            let y_zeroed = end + Vec3Df::new(nudge.x, 0.0, nudge.z);
-            let z_zeroed = end + Vec3Df::new(nudge.x, nudge.y, 0.0);
-            if !world.is_voxel_solid(get_voxel_pos(x_zeroed)) {
-                Vec3Df::new(0.0, nudge.y, nudge.z)
-            }
-            else if !world.is_voxel_solid(get_voxel_pos(y_zeroed)) {
-                Vec3Df::new(nudge.x, 0.0, nudge.z)
-            }
-            else if !world.is_voxel_solid(get_voxel_pos(z_zeroed)) {
-                Vec3Df::new(nudge.x, nudge.y, 0.0)
-            }
-            else {
-                nudge
-            }
-        }
-        else {
-            Vec3Df::new(0.0, 0.0, nudge.z + 1.0)
-        }
-        
-        
-    }
-    else {
-        Vec3Df::new(0.0, 0.0, nudge.z)
-    }
-}
 
 
 #[derive(Clone, ToBytes, FromBytes)]
