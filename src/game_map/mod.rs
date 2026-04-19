@@ -747,19 +747,10 @@ impl<V:Voxel, G:Generator<V>> GameMap<V, G> {
         &self,
         (x,y,z):(i32,i32,i32),
         (i,mask):(usize,u8),
-        scaler:&Vec3Df,
-        chunk:&MapChunk<V>,
-        around:[Option<&MapChunk<V>> ; 6],
         (prev_step,step):(usize, i32),
-        taken_dirs:&mut Vec<u8>,
         face_data:&mut Vec<[Option<(u32, (u8,u8,u8))> ; 6]>
     ) -> Option<(u32, (u8,u8,u8))> {
-        
-            let mut any_voxel_needs_face = false;
-            let mut any_voxel_full = false;
-            let mut full_texture = 0;
-
-            'outer : for dx in (x..x+step).step_by(prev_step) {
+            for dx in (x..x+step).step_by(prev_step) {
                 for dy in (y..y+step).step_by(prev_step) {
                     for dz in (z..z+step).step_by(prev_step) {
                         if Vec3D::new(dx, dy, dz).in_origin_prism(self.dims.chunk_length_i, self.dims.chunk_width_i, self.dims.chunk_height_i) {
@@ -777,6 +768,23 @@ impl<V:Voxel, G:Generator<V>> GameMap<V, G> {
             }
             None
         
+    }
+    fn aggregation_start_step_1(&self, chunk:&MapChunk<V>, around:[Option<&MapChunk<V>> ; 6], start:(i32,i32,i32), dir:usize, mask:u8, taken_dirs:&mut Vec<u8>, effective_dirs:&mut [bool ; 6], face_data:&mut Vec<[Option<(u32, (u8,u8,u8))> ; 6]>) -> Option<(u32, (u8,u8,u8))> {
+        let position = Vec3D::new(start.0, start.1, start.2);
+        let value = self.get_face_data_for_dir_first_pass((position.x, position.y, position.z), (dir, mask), chunk, around, taken_dirs, effective_dirs);
+        let index = (position.x as usize + (position.y as usize * self.dims.chunk_length) + (position.z as usize * self.dims.chunk_slice_area));
+        taken_dirs[index] |= mask;
+        face_data[index][dir] = value;
+        value
+    }
+
+    fn aggregation_start_step_n(&self, (prev_step, step):(usize,i32), start:(i32,i32,i32), dir:usize, mask:u8, taken_dirs:&mut Vec<u8>, face_data:&mut Vec<[Option<(u32, (u8,u8,u8))> ; 6]>) -> Option<(u32, (u8,u8,u8))> {
+        let position = Vec3D::new(start.0, start.1, start.2);
+        let value = self.get_face_data_for_dir((position.x, position.y, position.z), (dir, mask), (prev_step, step), face_data);
+        let index = (position.x as usize + (position.y as usize * self.dims.chunk_length) + (position.z as usize * self.dims.chunk_slice_area));
+        taken_dirs[index] |= mask;
+        face_data[index][dir] = value;
+        value
     }
 
     fn is_area_all_same_in_dir_step_1(&self, chunk:&MapChunk<V>, around:[Option<&MapChunk<V>> ; 6], start:(i32,i32,i32), dir:usize, mask:u8, (area, area_start):((i32, i32), (i32,i32)), taken_dirs:&mut Vec<u8>, mut same:Option<(u32, (u8,u8,u8))>, effective_dirs:&mut [bool ; 6], face_data:&mut Vec<[Option<(u32, (u8,u8,u8))> ; 6]>) -> Option<(u32, (u8,u8,u8))> {
@@ -814,7 +822,7 @@ impl<V:Voxel, G:Generator<V>> GameMap<V, G> {
         for first in area_start.0..area.0 {
             for second in area_start.1..area.1 {
                 let position = Vec3D::new(start.0, start.1, start.2) + first_dir * first + second_dir * second;
-                let value = self.get_face_data_for_dir((position.x, position.y, position.z), (dir, mask), scaler, chunk, around, (prev_step, step), taken_dirs, face_data);
+                let value = self.get_face_data_for_dir((position.x, position.y, position.z), (dir, mask), (prev_step, step), face_data);
                 if same.is_none() {
                     same = value
                 }
@@ -880,7 +888,7 @@ impl<V:Voxel, G:Generator<V>> GameMap<V, G> {
                             else {
                                 let mut first_dir_greed = 1;
                                 let mut second_dir_greed = 1;
-                                let mut face_data = self.is_area_all_same_in_dir_step_1(chunk, around, (x,y,z), *i, *mask, ((first_dir_greed, second_dir_greed), (0, 0)), &mut taken_dirs, None, &mut effective_dirs, &mut face_data_vec);
+                                let face_data = self.aggregation_start_step_1(chunk, around, (x,y,z), *i, *mask, &mut taken_dirs, &mut effective_dirs, &mut face_data_vec);
 
                                 while (first_dir_greed + 1) < self.dims.chunk_height_i && (second_dir_greed + 1) < self.dims.chunk_height_i && face_data.is_some() {
                                     
@@ -1027,7 +1035,7 @@ impl<V:Voxel, G:Generator<V>> GameMap<V, G> {
                             else {
                                 let mut first_dir_greed = 1;
                                 let mut second_dir_greed = 1;
-                                let mut face_data = self.is_area_all_same_in_dir(chunk, around, (prev_step, step), (x,y,z), *i, *mask, ((first_dir_greed, second_dir_greed), (0, 0)), &scaler, &mut taken_dirs, None, vec_face_data);
+                                let face_data = self.aggregation_start_step_n((prev_step, step), (x,y,z), *i, *mask, &mut taken_dirs, vec_face_data);
 
                                 while (first_dir_greed + 1) * step < self.dims.chunk_height_i && (second_dir_greed + 1) * step < self.dims.chunk_height_i && face_data.is_some() {
                                     
