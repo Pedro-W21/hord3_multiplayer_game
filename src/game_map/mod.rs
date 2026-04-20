@@ -1025,9 +1025,6 @@ impl<V:Voxel, G:Generator<V>> GameMap<V, G> {
             for x in (0..self.dims.chunk_length_i).step_by(step as usize) {
                 for y in (0..self.dims.chunk_width_i).step_by(step as usize) {
                     for z in (0..self.dims.chunk_height_i).step_by(step as usize) {
-
-                        //let voxels = chunk.get_voxels_around(Vec3D::new(x, y, z), around, &self.dims);
-                        //let voxel = chunk.get_at_local(Vec3D::new(x, y, z), &self.dims).unwrap();
                         for (i, mask) in kept_dirs.iter() {
                             if taken_dirs[(x as usize + (y as usize * self.dims.chunk_length) + (z as usize * self.dims.chunk_slice_area))] & *mask == *mask {
                                 continue
