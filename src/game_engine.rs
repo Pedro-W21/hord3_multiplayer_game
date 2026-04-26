@@ -489,7 +489,7 @@ fn after_main_tick<'a>(turn:EntityTurn, id:usize, first_ent:&GameEntityVecRead<'
             let loco = &second_ent.locomotion[id];
             let stats = &second_ent.stats[id];
             //dbg!(movement.pos, movement.spd, movement.orientation, movement.turn_spd);
-            loco.compute_vehicle_physics(id, &static_type.locomotion, static_type, &world.world, stats, movement, &second_ent.tunnels.hull_out, &second_ent.tunnels.position_out);
+            loco.compute_vehicle_physics(id, &static_type.locomotion, static_type, &world.world, stats, movement, &second_ent.tunnels.hull_out, &second_ent.tunnels.position_out, &second_ent.tunnels.locomotion_out);
             
             
         }

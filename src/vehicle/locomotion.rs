@@ -112,7 +112,8 @@ impl Locomotion {
         vehicle_stats:&VehicleStats,
         vehicle_position:&VehiclePosition,
         collider_events:&Sender<VehicleEntityEvent<SimpleComponentEvent<CoolGameEngineTID, HullUpdate>>>,
-        pos_events:&Sender<VehicleEntityEvent<VehiclePosEvent<CoolGameEngineTID>>>
+        pos_events:&Sender<VehicleEntityEvent<VehiclePosEvent<CoolGameEngineTID>>>,
+        loco_events:&Sender<VehicleEntityEvent<LocomotionEvent<CoolGameEngineTID>>>,
     ) {
         let mut new_vehicle_spd = vehicle_position.spd;
         new_vehicle_spd *= AIR_RESISTANCE;
@@ -121,12 +122,15 @@ impl Locomotion {
         let mut total_nonground_spd_add = Vec3Df::zero();
         let mut total_nonzero = 0;
         //dbg!(new_vehicle_turn_spd);
+        let mut equipment_pos_adds = Vec::with_capacity(self.equipment.len());
         for eq in &self.equipment {
-            let (spd_add, turn_spd_add, got_ground) = eq.collide_with_world(&static_locomotion.equipment[eq.static_equipment], world, vehicle_stats, vehicle_position);
-            
+            let static_type = &static_locomotion.equipment[eq.static_equipment];
+            let (spd_add, turn_spd_add, got_ground) = eq.collide_with_world(static_type, world, vehicle_stats, vehicle_position);
+            let (eq_spd_applied, eq_local_change) = eq.compute_suspension_part(static_type, spd_add, got_ground, vehicle_stats, vehicle_position);
+            equipment_pos_adds.push((eq_local_change, Orientation::zero()));
             if got_ground {
                 total_nonzero += 1;
-                total_ground_spd_add += spd_add;
+                total_ground_spd_add += spd_add - eq_spd_applied;
             }
             else {
                 total_nonground_spd_add += spd_add;
@@ -141,10 +145,12 @@ impl Locomotion {
         new_vehicle_turn_spd.yaw *= AIR_RESISTANCE * TURN_RESISTANCE;
         new_vehicle_turn_spd.pitch *= AIR_RESISTANCE * TURN_RESISTANCE;
         new_vehicle_turn_spd.roll *= AIR_RESISTANCE * TURN_RESISTANCE;
-        pos_events.send(VehicleEntityEvent::new(MustSync::Server, VehiclePosEvent::new(self_id, Some(CoolGameEngineTID::vehicles(self_id)), VehiclePosUpdate::UpdateEveryPos(vehicle_position.pos + new_vehicle_spd, vehicle_position.orientation + new_vehicle_turn_spd))));
-        pos_events.send(VehicleEntityEvent::new(MustSync::Server, VehiclePosEvent::new(self_id, Some(CoolGameEngineTID::vehicles(self_id)), VehiclePosUpdate::UpdateEverySpeed(new_vehicle_spd, new_vehicle_turn_spd))));
+        pos_events.send(VehicleEntityEvent::new(MustSync::Server, VehiclePosEvent::new(self_id, Some(CoolGameEngineTID::vehicles(self_id)), VehiclePosUpdate::UpdateEveryPos(vehicle_position.pos + new_vehicle_spd, vehicle_position.orientation + new_vehicle_turn_spd)))).unwrap();
+        pos_events.send(VehicleEntityEvent::new(MustSync::Server, VehiclePosEvent::new(self_id, Some(CoolGameEngineTID::vehicles(self_id)), VehiclePosUpdate::UpdateEverySpeed(new_vehicle_spd, new_vehicle_turn_spd)))).unwrap();
 
-        collider_events.send(VehicleEntityEvent::new(MustSync::Server,SimpleComponentEvent::new(self_id, None, HullUpdate::UpdateCollider(static_type.hull.base_collider.get_moved(vehicle_position.pos + new_vehicle_spd, vehicle_position.orientation + new_vehicle_turn_spd)))));
+        collider_events.send(VehicleEntityEvent::new(MustSync::Server,SimpleComponentEvent::new(self_id, None, HullUpdate::UpdateCollider(static_type.hull.base_collider.get_moved(vehicle_position.pos + new_vehicle_spd, vehicle_position.orientation + new_vehicle_turn_spd))))).unwrap();
+
+        loco_events.send(VehicleEntityEvent::new(MustSync::Server, LocomotionEvent::new(self_id, None, LocomotionUpdate::AddToEveryPos(equipment_pos_adds)))).unwrap();
     }
 }
 
@@ -190,6 +196,7 @@ pub enum LocomotionUpdate {
     UpdateEverything(Vec<LocomotionEquipment>),
     UpdateEverySpeed(Vec<(Vec3Df, Orientation)>),
     AddToEverySpeed(Vec<(Vec3Df, Orientation)>),
+    AddToEveryPos(Vec<(Vec3Df, Orientation)>),
     FlushActions,
     AddAction(Action, ActionResult)
 }
@@ -214,6 +221,10 @@ impl<ID:Identify> ComponentEvent<Locomotion, ID> for LocomotionEvent<ID> {
             LocomotionUpdate::AddToEverySpeed(updates) => for (eq, up) in components[self.id].equipment.iter_mut().zip(updates) {
                 eq.current_local_speed += up.0;
                 eq.current_local_turn_speed += up.1;
+            },
+            LocomotionUpdate::AddToEveryPos(updates) => for (eq, up) in components[self.id].equipment.iter_mut().zip(updates) {
+                eq.current_local_position += up.0;
+                eq.current_local_orient += up.1;
             },
             LocomotionUpdate::FlushActions => components[self.id].driver_actions.clear(),
             LocomotionUpdate::AddAction(act, res) => components[self.id].driver_actions.push((act, res)),
@@ -530,8 +541,36 @@ impl LocomotionEquipment {
         else {
             (Vec3Df::zero(), Orientation::zero(), false)
         }
-        
+    }
+    pub fn compute_suspension_part(&self, 
+        static_type:&StaticLocomotionEquipment, 
+        spd_add:Vec3Df, 
+        ground_contact:bool,
+        vehicle_stats:&VehicleStats,
+        vehicle_position:&VehiclePosition,
+    ) -> (Vec3Df, Vec3Df) {
+        match static_type.recoil.kind {
+            EqRecoilKind::SuspensionOnContact(coefficient) => {
+                let vehicle_rotation = Rotation::from_orientation(vehicle_position.orientation);
+                let rotated_suspension_direction = vehicle_rotation.rotate(static_type.recoil.equipment_local_vector_towards_recoil);
+                let rest_length = static_type.recoil.max_recoil;
+                let current_length = (self.current_local_position - (static_type.resting_local_position + static_type.recoil.equipment_local_vector_towards_recoil * rest_length)).norme();
+                let mut spd_dir = spd_add.normalise();
+                spd_dir.zero_out_nans();
+                let spd_applied = spd_add * coefficient * spd_dir.dot(&rotated_suspension_direction) * (current_length/rest_length);
+                let mut local_change = if ground_contact {
+                    static_type.recoil.equipment_local_vector_towards_recoil * coefficient * (current_length - rest_length)
+                }
+                else {
+                    static_type.recoil.equipment_local_vector_towards_recoil * coefficient * (current_length - rest_length)
+                };
+                let against_vehicle_rotat = Rotation::from_orientation(Orientation::new(-vehicle_position.orientation.yaw, -vehicle_position.orientation.pitch, -vehicle_position.orientation.roll));
+                local_change += against_vehicle_rotat.rotate(spd_applied);
 
+                (spd_applied, local_change)
+            },
+            _ => (Vec3Df::zero(), Vec3Df::zero())
+        }
     }
 
 }
@@ -596,14 +635,15 @@ pub enum ApplicationPoint {
 pub enum EqRecoilKind {
     InstantOnActivation,
     ProgressiveOnActivation(f32),
-    SuspensionOnContact(f32)
+    SuspensionOnContact(f32),
+    NoRecoil
 }
 
 #[derive(Clone, Debug, ToBytes, FromBytes)]
 pub struct EqRecoil {
     pub kind:EqRecoilKind,
     pub equipment_local_vector_towards_recoil:Vec3Df,
-    pub max_recoil:f32 // number of times the vector can be applied in recoil
+    pub max_recoil:f32 // number of times the vector can be applied in recoil (in either direction)
 }
 
 

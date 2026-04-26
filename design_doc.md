@@ -430,7 +430,26 @@ blocs piège :
 # Driving model improvements
 - friction on ground ?
    - square root of speed applied backwards ?
-- make wheels go back to 0 rotation when not turning
+- make wheels go back to 0 rotation when not turning - DONE
+- suspension
+   - need to associate some constant with suspension for stiffness
+   - apply constant * (current_length - rest_length) in the direction going back to rest (1)
+   - apply force * current_length * constant * dot(force, rest_direction) to the equipment when a force is applied
+   - apply force - what got into suspension to the hull
+   - how to implement it
+      - look at static type's recoil kind
+         - if Suspension :
+            - take spd_add from collide_with_world
+            - suspension direction = equipment local vector towards recoil
+            - rotate suspension direction vector to world pos
+            - rest_length = max recoil
+            - current_length = (current_pos - (rest pos + max recoil * suspension direction)).norme()
+
+            - if didn't touch ground :
+               - compute recall force (1)
+                  - use suspension direction
+               - add that to the local position
+            
 
 # how to optimize terrain mesh generation ?
 

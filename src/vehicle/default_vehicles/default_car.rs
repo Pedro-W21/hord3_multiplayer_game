@@ -85,9 +85,9 @@ fn get_default_loco_equips(aabb:AABB) -> Vec<StaticLocomotionEquipment> {
         },
         recoil:EqRecoil {
 
-            kind:EqRecoilKind::InstantOnActivation,
-            equipment_local_vector_towards_recoil:Vec3Df::new(0.0, 0.0, 0.0),
-            max_recoil:1.0
+            kind:EqRecoilKind::SuspensionOnContact(0.1),
+            equipment_local_vector_towards_recoil:Vec3Df::new(0.0, 0.0, 1.0),
+            max_recoil:2.0
         },
         collider:BoundingCollider::BS(BoundingSphere::new(aabb.get_ground_vertices()[0], 0.5)),
         down_dir:None,
